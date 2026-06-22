@@ -31,14 +31,21 @@ RUN git clone https://github.com/anttwo/MAtCha.git /workspace/MAtCha
 WORKDIR /workspace/MAtCha
 RUN python install.py
 
-# 2. Clone 4C4D WITH recursive submodules
+# 2. Clone 4C4D
 WORKDIR /workspace
-RUN git clone --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
+RUN git clone https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
-# 3. Build 4C4D Submodules dynamically (Self-healing path discovery)
-WORKDIR /workspace/4C4D/submodules
-RUN cd $(find . -maxdepth 2 -name "diff-gaussian-rasterization") && pip install .
-RUN cd $(find . -maxdepth 2 -name "simple-knn") && pip install .
+# Explicitly initialize and update submodules to ensure folders are not empty
+WORKDIR /workspace/4C4D
+RUN git submodule init && git submodule update
+
+# 3. Build 4C4D Submodules with verified paths
+# Most 4C4D repos nest the setup.py one level deep in the submodule folder
+WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
+RUN pip install .
+
+WORKDIR /workspace/4C4D/submodules/simple-knn
+RUN pip install .
 
 # Setup the RunPod Serverless Handler
 WORKDIR /workspace
