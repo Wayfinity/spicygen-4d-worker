@@ -14,13 +14,11 @@ WORKSPACE = "/workspace"
 INPUT_DIR = os.path.join(WORKSPACE, "inputs")
 OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
 
-
 def cleanup_workspace():
     for path in [INPUT_DIR, OUTPUT_DIR]:
         if os.path.exists(path):
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
-
 
 def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
     if not os.path.exists(ply_input_path):
@@ -67,16 +65,13 @@ def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
                 q = q / norm
             f.write(struct.pack('BBBB', int((q[0]+1)*127.5), int((q[1]+1)*127.5), int((q[2]+1)*127.5), int((q[3]+1)*127.5)))
 
-
 def handler(job):
     job_input = job.get("input", {})
 
-    # 1. Strictly extract SpicyGen's defined payload variables
     video_url = job_input.get("video_url")
     user_id = job_input.get("user_id")
-    job_id = job_input.get("job_id")  # <-- Now pulled from SpicyGen's input
-    
-    # Validation: Enforce strict payload requirements
+    job_id = job_input.get("job_id")
+
     if not video_url or not user_id or not job_id:
         return {"error": "Missing required payload data. Must include video_url, user_id, and job_id."}
 
@@ -89,15 +84,15 @@ def handler(job):
         print(f"[{job_id}] Downloading source video...")
         urllib.request.urlretrieve(video_url, grid_video_path)
 
-        print(f"[{job_id}] Slicing grid via FFmpeg...")
+        print(f"[{job_id}] Slicing grid via FFmpeg into agnostic indexed views...")
         ffmpeg_cmd = (
             f'ffmpeg -y -i "{grid_video_path}" -filter_complex '
             f'"[0:v]crop=iw/2:ih/2:0:0[tl]; [0:v]crop=iw/2:ih/2:iw/2:0[tr]; '
             f'[0:v]crop=iw/2:ih/2:0:ih/2[bl]; [0:v]crop=iw/2:ih/2:iw/2:ih/2[br]" '
-            f'-map "[tl]" "{INPUT_DIR}/view_front.mp4" '
-            f'-map "[tr]" "{INPUT_DIR}/view_back.mp4" '
-            f'-map "[bl]" "{INPUT_DIR}/view_left.mp4" '
-            f'-map "[br]" "{INPUT_DIR}/view_right.mp4"'
+            f'-map "[tl]" "{INPUT_DIR}/view_0.mp4" '
+            f'-map "[tr]" "{INPUT_DIR}/view_1.mp4" '
+            f'-map "[bl]" "{INPUT_DIR}/view_2.mp4" '
+            f'-map "[br]" "{INPUT_DIR}/view_3.mp4"'
         )
         subprocess.run(ffmpeg_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
@@ -123,7 +118,7 @@ def handler(job):
         ply_input = os.path.join(OUTPUT_DIR, "4c4d_model", "point_cloud", "iteration_1500", "point_cloud.ply") 
         convert_ply_to_splat(ply_input, splat_output)
         
-        # --- Batch S3 Upload Logic using SpicyGen's IDs ---
+        # --- Batch S3 Upload Logic ---
         print(f"[{job_id}] Uploading all assets to AWS S3...")
         s3_client = boto3.client(
             's3',
@@ -132,17 +127,17 @@ def handler(job):
             region_name=os.environ.get("AWS_REGION", "us-east-1")
         )
         
-        bucket_name = os.environ.get("AWS_BUCKET_NAME", "your-production-bucket-name")
-
-        # Use SpicyGen's defined job_id for the cloud storage structure
+        bucket_name = os.environ.get(
+            "AWS_BUCKET_NAME", "your-production-bucket-name")
         base_s3_folder = f"renders/{user_id}/{job_id}"
 
+        # Agnostic view file names matching the generated crops
         files_to_upload = [
             ("input_grid.mp4", grid_video_path),
-            ("view_front.mp4", os.path.join(INPUT_DIR, "view_front.mp4")),
-            ("view_back.mp4", os.path.join(INPUT_DIR, "view_back.mp4")),
-            ("view_left.mp4", os.path.join(INPUT_DIR, "view_left.mp4")),
-            ("view_right.mp4", os.path.join(INPUT_DIR, "view_right.mp4")),
+            ("view_0.mp4", os.path.join(INPUT_DIR, "view_0.mp4")),
+            ("view_1.mp4", os.path.join(INPUT_DIR, "view_1.mp4")),
+            ("view_2.mp4", os.path.join(INPUT_DIR, "view_2.mp4")),
+            ("view_3.mp4", os.path.join(INPUT_DIR, "view_3.mp4")),
             ("scene_model_4d.splat", splat_output)
         ]
 
