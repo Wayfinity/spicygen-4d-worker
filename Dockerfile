@@ -39,7 +39,7 @@ RUN git clone https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 # diff-gaussian-rasterization is on GitHub, simple-knn is on Inria GitLab
 WORKDIR /workspace/4C4D/submodules
 RUN rm -rf diff-gaussian-rasterization simple-knn && \
-    git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization && \
+    git clone --recursive https://github.com/graphdeco-inria/diff-gaussian-rasterization && \
     git clone https://gitlab.inria.fr/bkerbl/simple-knn.git
 
 # 4. Build 4C4D Submodules with explicit GPU architecture flags
