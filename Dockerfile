@@ -35,12 +35,14 @@ RUN python install.py
 WORKDIR /workspace
 RUN git clone https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
-# Explicitly initialize and update submodules to ensure folders are not empty
-WORKDIR /workspace/4C4D
-RUN git submodule init && git submodule update
+# 3. Manually clone submodules to guarantee they are populated
+# diff-gaussian-rasterization is on GitHub, simple-knn is on Inria GitLab
+WORKDIR /workspace/4C4D/submodules
+RUN rm -rf diff-gaussian-rasterization simple-knn && \
+    git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization && \
+    git clone https://gitlab.inria.fr/bkerbl/simple-knn.git
 
-# 3. Build 4C4D Submodules with verified paths
-# Most 4C4D repos nest the setup.py one level deep in the submodule folder
+# 4. Build 4C4D Submodules
 WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
 RUN pip install .
 
