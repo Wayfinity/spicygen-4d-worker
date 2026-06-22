@@ -19,3 +19,5 @@ omegaconf==2.3.0
 torchmetrics==0.11.4
 imagesize==1.4.1
 kornia==0.6.12
+faiss-cpu>=1.8.0
+imageio>=2.34.0
