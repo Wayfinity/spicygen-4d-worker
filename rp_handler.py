@@ -17,14 +17,19 @@ OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
 
 
 def run_cmd(cmd, cwd=None):
-    subprocess.run(
+    print(f"[cmd] {' '.join(cmd)}")
+    completed = subprocess.run(
         cmd,
         cwd=cwd,
-        check=True,
+        check=False,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
     )
+    if completed.stdout:
+        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, cmd, output=completed.stdout)
 
 
 def build_4c4d_config(config_path: str, source_path: str, model_path: str, iterations: int = 1500):
@@ -193,6 +198,7 @@ def handler(job):
         print(f"[{job_id}] Running MAtCha SfM initialization...")
         matcha_images_dir = os.path.join(OUTPUT_DIR, "init_points", "images")
         os.makedirs(matcha_images_dir, exist_ok=True)
+        matcha_output_dir = os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm")
 
         for i in range(4):
             run_cmd([
@@ -202,12 +208,22 @@ def handler(job):
             ])
 
         run_cmd([
-            "python3", "/workspace/MAtCha/train.py",
-            "-s", matcha_images_dir,
-            "-o", os.path.join(OUTPUT_DIR, "init_points"),
-            "--sfm_config", "unposed",
-            "--sfm_only",
+            "python3", "/workspace/MAtCha/mast3r/run_mast3r.py",
+            "--scene_path", matcha_images_dir,
+            "--output_dir", matcha_output_dir,
+            "--weights_path", "/workspace/MAtCha/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth",
+            "--retrieval_model", "/workspace/MAtCha/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth",
+            "--min_conf_thr", "0.0",
+            "--matching_conf_thr", "0.0",
+            "--n_coarse_iterations", "1000",
+            "--n_refinement_iterations", "1000",
+            "--TSDF_thresh", "0.0",
+            "--fix_principal_point",
             "--n_images", "4",
+            "--image_size", "512",
+            "--max_window_size", "20",
+            "--max_refid", "10",
+            "--output_conf_thr", "0.1",
         ], cwd="/workspace/MAtCha")
 
         matcha_points = find_matcha_points_file(os.path.join(OUTPUT_DIR, "init_points"))

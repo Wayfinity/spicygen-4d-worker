@@ -37,6 +37,8 @@ jobs:
         context: .
         file: ./Dockerfile
         push: true
-        tags: mavid/spicygen-4d:latest
+        tags: |
+          mavid/spicygen-4d:latest
+          mavid/spicygen-4d:${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
