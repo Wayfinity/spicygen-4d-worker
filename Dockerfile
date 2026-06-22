@@ -42,8 +42,10 @@ RUN rm -rf diff-gaussian-rasterization simple-knn && \
     git clone https://github.com/graphdeco-inria/diff-gaussian-rasterization && \
     git clone https://gitlab.inria.fr/bkerbl/simple-knn.git
 
-# 4. Build 4C4D Submodules
+# 4. Build 4C4D Submodules with explicit GPU architecture flags
 WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
+# 8.0 is for A100, 8.6 is for 30-series, 8.9 is for 40-series, 9.0 is for H100
+ENV TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0"
 RUN pip install .
 
 WORKDIR /workspace/4C4D/submodules/simple-knn
