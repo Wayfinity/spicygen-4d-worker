@@ -1,5 +1,6 @@
 # Switch to CUDA 11.8 to perfectly match MAtCha's strict internal requirements
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-devel
+# Updated tag that actually exists on Docker Hub
+FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8
 
 ENV DEBIAN_FRONTEND=noninteractive
 
