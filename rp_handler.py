@@ -14,17 +14,15 @@ WORKSPACE = "/workspace"
 INPUT_DIR = os.path.join(WORKSPACE, "inputs")
 OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
 
+
 def cleanup_workspace():
-    """Purges temporary directories to ensure isolated runs on warm serverless containers."""
     for path in [INPUT_DIR, OUTPUT_DIR]:
         if os.path.exists(path):
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
 
+
 def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
-    """
-    Converts a standard 3D/4D Gaussian PLY file into a compressed binary .splat file.
-    """
     if not os.path.exists(ply_input_path):
         raise FileNotFoundError(f"Source PLY file not found at {ply_input_path}")
         
@@ -69,17 +67,18 @@ def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
                 q = q / norm
             f.write(struct.pack('BBBB', int((q[0]+1)*127.5), int((q[1]+1)*127.5), int((q[2]+1)*127.5), int((q[3]+1)*127.5)))
 
+
 def handler(job):
-    """
-    Main execution loop for RunPod Serverless.
-    """
     job_input = job.get("input", {})
+
+    # 1. Strictly extract SpicyGen's defined payload variables
     video_url = job_input.get("video_url")
-    user_id = job_input.get("user_id", "unassigned_user")
-    job_id = job.get("id", "unknown_job")
+    user_id = job_input.get("user_id")
+    job_id = job_input.get("job_id")  # <-- Now pulled from SpicyGen's input
     
-    if not video_url:
-        return {"error": "Missing video_url in input payload."}
+    # Validation: Enforce strict payload requirements
+    if not video_url or not user_id or not job_id:
+        return {"error": "Missing required payload data. Must include video_url, user_id, and job_id."}
 
     cleanup_workspace()
     
@@ -95,10 +94,10 @@ def handler(job):
             f'ffmpeg -y -i "{grid_video_path}" -filter_complex '
             f'"[0:v]crop=iw/2:ih/2:0:0[tl]; [0:v]crop=iw/2:ih/2:iw/2:0[tr]; '
             f'[0:v]crop=iw/2:ih/2:0:ih/2[bl]; [0:v]crop=iw/2:ih/2:iw/2:ih/2[br]" '
-            f'-map "[tl]" "{INPUT_DIR}/video_split_1.mp4" '
-            f'-map "[tr]" "{INPUT_DIR}/video_split_2.mp4" '
-            f'-map "[bl]" "{INPUT_DIR}/video_split_3.mp4" '
-            f'-map "[br]" "{INPUT_DIR}/video_split_4.mp4"'
+            f'-map "[tl]" "{INPUT_DIR}/view_front.mp4" '
+            f'-map "[tr]" "{INPUT_DIR}/view_back.mp4" '
+            f'-map "[bl]" "{INPUT_DIR}/view_left.mp4" '
+            f'-map "[br]" "{INPUT_DIR}/view_right.mp4"'
         )
         subprocess.run(ffmpeg_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
@@ -124,7 +123,7 @@ def handler(job):
         ply_input = os.path.join(OUTPUT_DIR, "4c4d_model", "point_cloud", "iteration_1500", "point_cloud.ply") 
         convert_ply_to_splat(ply_input, splat_output)
         
-        # --- Batch S3 Upload Logic ---
+        # --- Batch S3 Upload Logic using SpicyGen's IDs ---
         print(f"[{job_id}] Uploading all assets to AWS S3...")
         s3_client = boto3.client(
             's3',
@@ -134,15 +133,16 @@ def handler(job):
         )
         
         bucket_name = os.environ.get("AWS_BUCKET_NAME", "your-production-bucket-name")
+
+        # Use SpicyGen's defined job_id for the cloud storage structure
         base_s3_folder = f"renders/{user_id}/{job_id}"
 
-        # Map of filenames to their local generated paths
         files_to_upload = [
             ("input_grid.mp4", grid_video_path),
-            ("video_split_1.mp4", os.path.join(INPUT_DIR, "video_split_1.mp4")),
-            ("video_split_2.mp4", os.path.join(INPUT_DIR, "video_split_2.mp4")),
-            ("video_split_3.mp4", os.path.join(INPUT_DIR, "video_split_3.mp4")),
-            ("video_split_4.mp4", os.path.join(INPUT_DIR, "video_split_4.mp4")),
+            ("view_front.mp4", os.path.join(INPUT_DIR, "view_front.mp4")),
+            ("view_back.mp4", os.path.join(INPUT_DIR, "view_back.mp4")),
+            ("view_left.mp4", os.path.join(INPUT_DIR, "view_left.mp4")),
+            ("view_right.mp4", os.path.join(INPUT_DIR, "view_right.mp4")),
             ("scene_model_4d.splat", splat_output)
         ]
 
@@ -155,7 +155,6 @@ def handler(job):
                 s3_client.upload_file(local_path, bucket_name, s3_key)
                 uploaded_files.append(file_name)
 
-                # Generate the secure URL specifically for the web viewer to load the splat
                 if file_name == "scene_model_4d.splat":
                     presigned_splat_url = s3_client.generate_presigned_url(
                         'get_object',
@@ -166,6 +165,7 @@ def handler(job):
         print(f"[{job_id}] Process complete.")
         return {
             "status": "COMPLETED",
+            "spicygen_job_id": job_id,
             "s3_folder_path": f"{base_s3_folder}/",
             "splat_url": presigned_splat_url,
             "files": uploaded_files
@@ -179,6 +179,5 @@ def handler(job):
     except Exception as e:
         return {"error": f"Internal Process Failure: {str(e)}"}
 
-# Start the RunPod Serverless listener
 if __name__ == "__main__":
     runpod.serverless.start({"handler": handler})
