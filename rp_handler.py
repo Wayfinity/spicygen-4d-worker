@@ -21,7 +21,7 @@ def run_cmd(cmd, cwd=None):
         cmd,
         cwd=cwd,
         check=True,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
@@ -85,6 +85,28 @@ def find_latest_4c4d_ply(model_path: str):
             return -1
 
     return max(candidates, key=iteration_key)
+
+
+def find_matcha_points_file(output_root: str):
+    preferred_paths = [
+        os.path.join(output_root, "mast3r_sfm", "points.ply"),
+        os.path.join(output_root, "mast3r_sfm", "point_cloud.ply"),
+        os.path.join(output_root, "points.ply"),
+        os.path.join(output_root, "point_cloud.ply"),
+    ]
+    for path in preferred_paths:
+        if os.path.exists(path):
+            return path
+
+    candidates = glob.glob(os.path.join(output_root, "**", "points.ply"), recursive=True)
+    candidates.extend(glob.glob(os.path.join(output_root, "**", "point_cloud.ply"), recursive=True))
+    if candidates:
+        return sorted(set(candidates))[0]
+
+    raise FileNotFoundError(
+        f"MAtCha did not produce a point cloud under {output_root}. "
+        f"Checked: {', '.join(preferred_paths)}"
+    )
 
 def cleanup_workspace():
     for path in [INPUT_DIR, OUTPUT_DIR]:
@@ -188,9 +210,7 @@ def handler(job):
             "--n_images", "4",
         ], cwd="/workspace/MAtCha")
 
-        matcha_points = os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm", "points.ply")
-        if not os.path.exists(matcha_points):
-            raise FileNotFoundError(f"MAtCha points file not found: {matcha_points}")
+        matcha_points = find_matcha_points_file(os.path.join(OUTPUT_DIR, "init_points"))
 
         # Keep legacy output path for any downstream steps expecting point_cloud.ply.
         shutil.copyfile(matcha_points, os.path.join(OUTPUT_DIR, "init_points", "point_cloud.ply"))
@@ -262,7 +282,7 @@ def handler(job):
         }
 
     except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else "Subprocess execution failed"
+        error_msg = e.stderr or e.stdout or "Subprocess execution failed"
         return {"error": f"Pipeline error: {error_msg}"}
     except NoCredentialsError:
         return {"error": "AWS credentials not available in RunPod environment secrets."}
