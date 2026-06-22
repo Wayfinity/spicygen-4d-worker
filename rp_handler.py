@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import struct
 import urllib.request
+import glob
 import runpod
 import boto3
 import numpy as np
@@ -13,6 +14,77 @@ from plyfile import PlyData
 WORKSPACE = "/workspace"
 INPUT_DIR = os.path.join(WORKSPACE, "inputs")
 OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
+
+
+def run_cmd(cmd, cwd=None):
+    subprocess.run(
+        cmd,
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def build_4c4d_config(config_path: str, source_path: str, model_path: str, iterations: int = 1500):
+    # 4C4D now expects a YAML config passed via --config.
+    config_content = f"""
+gaussian_dim: 4
+time_duration: [0.0, 10.0]
+num_pts: 200000
+num_pts_ratio: 1.0
+rot_4d: true
+force_sh_3d: false
+batch_size: 1
+exhaust_test: false
+
+ModelParams:
+  sh_degree: 3
+  source_path: "{source_path}"
+  model_path: "{model_path}"
+  images: "images"
+  resolution: 1
+  white_background: false
+  data_device: "cuda"
+  eval: true
+  extension: ".png"
+  num_extra_pts: 0
+  loaded_pth: ""
+  frame_ratio: 1
+  dataloader: false
+
+PipelineParams:
+  convert_SHs_python: false
+  compute_cov3D_python: false
+  debug: false
+  env_map_res: 0
+  env_optimize_until: 1000000000
+  env_optimize_from: 0
+  eval_shfs_4d: true
+
+OptimizationParams:
+  iterations: {iterations}
+""".strip()
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(config_content)
+
+
+def find_latest_4c4d_ply(model_path: str):
+    pattern = os.path.join(model_path, "point_cloud", "iteration_*", "point_cloud.ply")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        raise FileNotFoundError(f"No 4C4D PLY found using pattern: {pattern}")
+
+    def iteration_key(path):
+        folder = os.path.basename(os.path.dirname(path))
+        try:
+            return int(folder.split("_")[-1])
+        except ValueError:
+            return -1
+
+    return max(candidates, key=iteration_key)
 
 def cleanup_workspace():
     for path in [INPUT_DIR, OUTPUT_DIR]:
@@ -85,37 +157,60 @@ def handler(job):
         urllib.request.urlretrieve(video_url, grid_video_path)
 
         print(f"[{job_id}] Slicing grid via FFmpeg into agnostic indexed views...")
-        ffmpeg_cmd = (
-            f'ffmpeg -y -i "{grid_video_path}" -filter_complex '
-            f'"[0:v]crop=iw/2:ih/2:0:0[tl]; [0:v]crop=iw/2:ih/2:iw/2:0[tr]; '
-            f'[0:v]crop=iw/2:ih/2:0:ih/2[bl]; [0:v]crop=iw/2:ih/2:iw/2:ih/2[br]" '
-            f'-map "[tl]" "{INPUT_DIR}/view_0.mp4" '
-            f'-map "[tr]" "{INPUT_DIR}/view_1.mp4" '
-            f'-map "[bl]" "{INPUT_DIR}/view_2.mp4" '
-            f'-map "[br]" "{INPUT_DIR}/view_3.mp4"'
-        )
-        subprocess.run(ffmpeg_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        run_cmd([
+            "ffmpeg", "-y", "-i", grid_video_path,
+            "-filter_complex",
+            "[0:v]crop=iw/2:ih/2:0:0[tl];[0:v]crop=iw/2:ih/2:iw/2:0[tr];"
+            "[0:v]crop=iw/2:ih/2:0:ih/2[bl];[0:v]crop=iw/2:ih/2:iw/2:ih/2[br]",
+            "-map", "[tl]", os.path.join(INPUT_DIR, "view_0.mp4"),
+            "-map", "[tr]", os.path.join(INPUT_DIR, "view_1.mp4"),
+            "-map", "[bl]", os.path.join(INPUT_DIR, "view_2.mp4"),
+            "-map", "[br]", os.path.join(INPUT_DIR, "view_3.mp4"),
+        ])
 
-        print(f"[{job_id}] Running MAtCha initialization...")
-        matcha_cmd = (
-            f"python3 /workspace/MAtCha/scripts/process_video.py "
-            f"--video_dir {INPUT_DIR} "
-            f"--output_dir {OUTPUT_DIR}/init_points"
-        )
-        subprocess.run(matcha_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        print(f"[{job_id}] Running MAtCha SfM initialization...")
+        matcha_images_dir = os.path.join(OUTPUT_DIR, "init_points", "images")
+        os.makedirs(matcha_images_dir, exist_ok=True)
+
+        for i in range(4):
+            run_cmd([
+                "ffmpeg", "-y", "-i", os.path.join(INPUT_DIR, f"view_{i}.mp4"),
+                "-frames:v", "1",
+                os.path.join(matcha_images_dir, f"view_{i}.png"),
+            ])
+
+        run_cmd([
+            "python3", "/workspace/MAtCha/train.py",
+            "-s", matcha_images_dir,
+            "-o", os.path.join(OUTPUT_DIR, "init_points"),
+            "--sfm_config", "unposed",
+            "--sfm_only",
+            "--n_images", "4",
+        ], cwd="/workspace/MAtCha")
+
+        matcha_points = os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm", "points.ply")
+        if not os.path.exists(matcha_points):
+            raise FileNotFoundError(f"MAtCha points file not found: {matcha_points}")
+
+        # Keep legacy output path for any downstream steps expecting point_cloud.ply.
+        shutil.copyfile(matcha_points, os.path.join(OUTPUT_DIR, "init_points", "point_cloud.ply"))
 
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
-        c4d_cmd = (
-            f"python3 /workspace/4C4D/train.py "
-            f"--source_path {INPUT_DIR} "
-            f"--model_path {OUTPUT_DIR}/4c4d_model "
-            f"--init_pt_cloud {OUTPUT_DIR}/init_points/point_cloud.ply "
-            f"--iterations 1500"
+        c4d_model_path = os.path.join(OUTPUT_DIR, "4c4d_model")
+        c4d_config_path = os.path.join(OUTPUT_DIR, "4c4d_config.yaml")
+        build_4c4d_config(
+            config_path=c4d_config_path,
+            source_path=os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm"),
+            model_path=c4d_model_path,
+            iterations=1500,
         )
-        subprocess.run(c4d_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        run_cmd([
+            "python3", "/workspace/4C4D/train.py",
+            "--config", c4d_config_path,
+        ], cwd="/workspace/4C4D")
 
         print(f"[{job_id}] Converting PLY to binary SPLAT format...")
-        ply_input = os.path.join(OUTPUT_DIR, "4c4d_model", "point_cloud", "iteration_1500", "point_cloud.ply") 
+        ply_input = find_latest_4c4d_ply(c4d_model_path)
         convert_ply_to_splat(ply_input, splat_output)
         
         # --- Batch S3 Upload Logic ---
@@ -167,7 +262,7 @@ def handler(job):
         }
 
     except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode() if e.stderr else "Subprocess execution failed"
+        error_msg = e.stderr if e.stderr else "Subprocess execution failed"
         return {"error": f"Pipeline error: {error_msg}"}
     except NoCredentialsError:
         return {"error": "AWS credentials not available in RunPod environment secrets."}
