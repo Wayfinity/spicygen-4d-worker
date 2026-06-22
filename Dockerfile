@@ -1,11 +1,12 @@
-# Switch to CUDA 11.8 to perfectly match MAtCha's strict internal requirements
-# Updated tag that actually exists on Docker Hub
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8
+# Use the official NVIDIA CUDA base image - This is guaranteed to exist
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install critical system dependencies
+# Install System Dependencies
 RUN apt-get update && apt-get install -y \
+    python3-pip \
+    python3-dev \
     git \
     ffmpeg \
     libgl1-mesa-glx \
@@ -13,23 +14,28 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
+# Fix python symlinks
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
 WORKDIR /workspace
 
-# Install Serverless Requirements into the global base environment
+# Install PyTorch + CUDA 11.8 specifically
+RUN pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
+
+# Install Serverless Requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 1. Clone and setup MAtCha 
-# (This script will automatically create an isolated Conda env named "matcha")
 RUN git clone https://github.com/anttwo/MAtCha.git /workspace/MAtCha
 WORKDIR /workspace/MAtCha
 RUN python install.py
 
-# 2. Clone 4C4D WITH the --recursive flag to pull the C++ submodule folders!
+# 2. Clone 4C4D WITH recursive submodules
 WORKDIR /workspace
 RUN git clone --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
-# 3. Build 4C4D Submodules natively in the base environment
+# 3. Build 4C4D Submodules
 WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
 RUN pip install .
 
