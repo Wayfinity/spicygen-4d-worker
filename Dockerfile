@@ -22,6 +22,9 @@ WORKDIR /workspace
 # Install PyTorch + CUDA 11.8 specifically
 RUN pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
 
+# Install faiss-gpu for CUDA 11.8 support (faiss-cpu in requirements.txt is insufficient)
+RUN pip install --no-cache-dir faiss-gpu-cu11==1.10.0
+
 # Install Serverless Requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
