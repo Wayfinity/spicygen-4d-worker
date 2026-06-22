@@ -40,8 +40,11 @@ RUN pip install --no-cache-dir pytorch3d==0.7.4 \
     -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu118_pyt201/download.html
 
 # ── Serverless handler dependencies ─────────────────────────
+# Split into two steps: gradio==4.44.1 pins tomlkit==0.12.0 while
+# runpod==1.7.0 needs tomlkit>=0.12.2 — they can't co-resolve.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir runpod==1.7.0
 
 # ════════════════════════════════════════════════════════════
 # MAtCha

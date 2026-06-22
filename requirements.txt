@@ -1,5 +1,4 @@
-# ── RunPod serverless ──
-runpod==1.7.0
+# ── RunPod serverless (installed separately due to tomlkit conflict with gradio) ──
 boto3==1.34.68
 
 # ── Core handler dependencies ──
