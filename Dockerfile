@@ -55,11 +55,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ════════════════════════════════════════════════════════════
 # 4C4D
 # ════════════════════════════════════════════════════════════
-RUN git clone --depth 1 https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
+RUN git clone --depth 1 --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
 # ── All 4C4D extensions in one layer ────────────────────────
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir --no-build-isolation /workspace/4C4D/fused-ssim-main \
+    && mkdir -p /workspace/4C4D/submodules \
     && cd /workspace/4C4D/submodules \
     && rm -rf diff-gaussian-rasterization simple-knn \
     && git clone --depth 1 https://github.com/graphdeco-inria/diff-gaussian-rasterization \
