@@ -72,7 +72,7 @@ RUN pip install --no-cache-dir .
 
 WORKDIR /workspace/MAtCha/2d-gaussian-splatting/submodules/tetra-triangulation
 ENV CUDA_HOME=/usr/local/cuda
-RUN cmake -DCUDA_HOME=/usr/local/cuda . && make && pip install --no-cache-dir .
+RUN cmake -DCMAKE_CXX_FLAGS="-I/usr/local/cuda/include" . && make && pip install --no-cache-dir .
 
 # ════════════════════════════════════════════════════════════
 # 4C4D
