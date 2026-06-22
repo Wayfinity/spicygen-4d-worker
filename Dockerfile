@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 1. Clone and setup MAtCha 
 RUN git clone https://github.com/anttwo/MAtCha.git /workspace/MAtCha
 WORKDIR /workspace/MAtCha
-RUN python install.py
+# MAtCha's install.py is conda-based and does not apply in this pip-only image.
+# Runtime Python dependencies are installed via requirements.txt above.
 
 # 2. Clone 4C4D
 WORKDIR /workspace
