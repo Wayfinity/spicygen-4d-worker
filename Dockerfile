@@ -1,5 +1,5 @@
-# Start from the official PyTorch image (Torch + CUDA 12.1 + NVCC already baked in)
-FROM pytorch/pytorch:2.2.1-cuda12.1-cudnn8-devel
+# Switch to CUDA 11.8 to perfectly match MAtCha's strict internal requirements
+FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -14,19 +14,21 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Install Serverless Requirements (No pip install torch step needed!)
+# Install Serverless Requirements into the global base environment
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone and setup MAtCha
+# 1. Clone and setup MAtCha 
+# (This script will automatically create an isolated Conda env named "matcha")
 RUN git clone https://github.com/anttwo/MAtCha.git /workspace/MAtCha
 WORKDIR /workspace/MAtCha
 RUN python install.py
 
-# Clone and build 4C4D Submodules
+# 2. Clone 4C4D WITH the --recursive flag to pull the C++ submodule folders!
 WORKDIR /workspace
-RUN git clone https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
+RUN git clone --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
+# 3. Build 4C4D Submodules natively in the base environment
 WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
 RUN pip install .
 
@@ -37,5 +39,4 @@ RUN pip install .
 WORKDIR /workspace
 COPY rp_handler.py .
 
-# Boot the RunPod listener
 CMD ["python", "-u", "rp_handler.py"]
