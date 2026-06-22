@@ -71,7 +71,8 @@ WORKDIR /workspace/MAtCha/2d-gaussian-splatting/submodules/simple-knn
 RUN pip install --no-cache-dir .
 
 WORKDIR /workspace/MAtCha/2d-gaussian-splatting/submodules/tetra-triangulation
-RUN cmake . && make && pip install --no-cache-dir .
+ENV CUDA_HOME=/usr/local/cuda
+RUN cmake -DCUDA_HOME=/usr/local/cuda . && make && pip install --no-cache-dir .
 
 # ════════════════════════════════════════════════════════════
 # 4C4D
