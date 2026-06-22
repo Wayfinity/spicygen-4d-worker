@@ -298,7 +298,7 @@ def handler(job):
         }
 
     except subprocess.CalledProcessError as e:
-        error_msg = e.stderr or e.stdout or "Subprocess execution failed"
+        error_msg = e.output or e.stderr or e.stdout or "Subprocess execution failed"
         return {"error": f"Pipeline error: {error_msg}"}
     except NoCredentialsError:
         return {"error": "AWS credentials not available in RunPod environment secrets."}
