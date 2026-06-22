@@ -63,7 +63,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && mkdir -p /workspace/4C4D/submodules \
     && cd /workspace/4C4D/submodules \
     && rm -rf diff-gaussian-rasterization simple-knn \
-    && git clone --depth 1 https://github.com/graphdeco-inria/diff-gaussian-rasterization \
+    && git clone --depth 1 --recursive https://github.com/graphdeco-inria/diff-gaussian-rasterization \
     && git clone --depth 1 https://gitlab.inria.fr/bkerbl/simple-knn.git \
     && pip install --no-cache-dir ./diff-gaussian-rasterization \
     && pip install --no-cache-dir ./simple-knn \
