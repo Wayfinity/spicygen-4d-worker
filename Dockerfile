@@ -37,7 +37,7 @@ RUN git clone https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
 # Install local Python extension required by 4C4D train.py (fused_ssim import)
 WORKDIR /workspace/4C4D
-RUN pip install --no-cache-dir ./fused-ssim-main
+RUN pip install --no-cache-dir --no-build-isolation ./fused-ssim-main
 
 # 3. Manually clone submodules to guarantee they are populated
 # diff-gaussian-rasterization is on GitHub, simple-knn is on Inria GitLab
