@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     wget \
     cmake \
+    libcgal-dev \
+    libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Fix python symlink
