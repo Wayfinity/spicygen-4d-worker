@@ -37,6 +37,6 @@ jobs:
         context: .
         file: ./Dockerfile
         push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/spicygen-4d:latest
+        tags: mavid/spicygen-4d:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
