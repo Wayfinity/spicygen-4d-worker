@@ -1,4 +1,4 @@
-# Use the official NVIDIA CUDA base image - This is guaranteed to exist
+# Use the official NVIDIA CUDA 11.8 base image
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -35,15 +35,14 @@ RUN python install.py
 WORKDIR /workspace
 RUN git clone --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
-# 3. Build 4C4D Submodules
-WORKDIR /workspace/4C4D/submodules/diff-gaussian-rasterization
-RUN pip install .
-
-WORKDIR /workspace/4C4D/submodules/simple-knn
-RUN pip install .
+# 3. Build 4C4D Submodules dynamically (Self-healing path discovery)
+WORKDIR /workspace/4C4D/submodules
+RUN cd $(find . -maxdepth 2 -name "diff-gaussian-rasterization") && pip install .
+RUN cd $(find . -maxdepth 2 -name "simple-knn") && pip install .
 
 # Setup the RunPod Serverless Handler
 WORKDIR /workspace
 COPY rp_handler.py .
 
+# Boot the RunPod listener
 CMD ["python", "-u", "rp_handler.py"]
