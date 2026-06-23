@@ -259,6 +259,7 @@ def handler(job):
         run_cmd([
             "python3", "/workspace/4C4D/train.py",
             "--config", c4d_config_path,
+            "--save_iterations", "1500",
         ], cwd="/workspace/4C4D")
 
         print(f"[{job_id}] Converting PLY to binary SPLAT format...")
