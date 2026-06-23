@@ -68,8 +68,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && pip install --no-cache-dir ./diff-gaussian-rasterization \
     && pip install --no-cache-dir ./simple-knn \
     && pip install --no-cache-dir /workspace/4C4D/pointops2 \
-    && sed -i 's/# image = load_image(image_path)/image = load_image(image_path)/' /workspace/4C4D/scene/dataset_readers.py \
-    && sed -i '/^[[:space:]]*image = None$/d' /workspace/4C4D/scene/dataset_readers.py
+    && python3 -c " \
+        f='/workspace/4C4D/scene/dataset_readers.py'; \
+        c=open(f).read(); \
+        c=c.replace('# image = load_image(image_path)\n        image = None', 'image = load_image(image_path)'); \
+        c=c.replace(\"# temp_image = load_image(task['temp_path'])\n            temp_image = None\", \"temp_image = load_image(task['temp_path'])\"); \
+        open(f,'w').write(c)"
 
 # ════════════════════════════════════════════════════════════
 # RunPod Serverless Handler
