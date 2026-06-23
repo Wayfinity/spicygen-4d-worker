@@ -51,7 +51,7 @@ ModelParams:
   resolution: 1
   white_background: false
   data_device: "cuda"
-  eval: true
+  eval: false
   extension: ".png"
   num_extra_pts: 0
   loaded_pth: ""
