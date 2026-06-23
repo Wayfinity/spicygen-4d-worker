@@ -8,6 +8,7 @@ to load models directly from .pth files.
 """
 
 import sys
+import re
 
 RUN_MAST3R_PATH = "/workspace/MAtCha/mast3r/run_mast3r.py"
 
@@ -33,14 +34,6 @@ def load_model_from_pth(path, device):
 
 '''
 
-# The replacement for the model loading line
-OLD_LINE = "    model = AsymmetricMASt3R.from_pretrained(args.weights_path).to(device)"
-NEW_CODE = """    # Handle local .pth files directly
-    if args.weights_path.endswith(".pth") and os.path.exists(args.weights_path):
-        model = load_model_from_pth(args.weights_path, device)
-    else:
-        model = AsymmetricMASt3R.from_pretrained(args.weights_path).to(device)"""
-
 def main():
     print(f"Patching {RUN_MAST3R_PATH}...")
     
@@ -52,29 +45,37 @@ def main():
         print("Already patched, skipping.")
         return
     
-    # Find where to insert the function (before the line that loads the model)
-    lines = content.split('\n')
-    insert_idx = None
+    # Find the line with model = AsymmetricMASt3R.from_pretrained
+    pattern = r'^(\s+)model\s*=\s*AsymmetricMASt3R\.from_pretrained\(args\.weights_path\)\.to\(device\)'
+    match = re.search(pattern, content, re.MULTILINE)
     
-    for i, line in enumerate(lines):
-        if OLD_LINE in line:
-            # Find the start of the function containing this line
-            for j in range(i-1, -1, -1):
-                if lines[j].startswith('def '):
-                    insert_idx = j
-                    break
-            break
-    
-    if insert_idx is None:
-        print(f"ERROR: Could not find line to patch: {OLD_LINE}")
+    if not match:
+        print("ERROR: Could not find model loading line")
         sys.exit(1)
+
+    indent = match.group(1)
+    print(f"Found line with indent: {repr(indent)}")
+
+    # Create replacement code
+    replacement = f'''{indent}# Handle local .pth files directly
+{indent}if args.weights_path.endswith(".pth") and os.path.exists(args.weights_path):
+{indent}    model = load_model_from_pth(args.weights_path, device)
+{indent}else:
+{indent}    model = AsymmetricMASt3R.from_pretrained(args.weights_path).to(device)'''
     
-    # Insert the function
-    lines.insert(insert_idx, LOAD_MODEL_FUNC)
+    # Replace the line
+    content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
     
-    # Now find and replace the model loading line
-    content = '\n'.join(lines)
-    content = content.replace(OLD_LINE, NEW_CODE)
+    # Insert the helper function before the if __name__ block
+    if "__name__" in content:
+        # Find the line with if __name__ == "__main__":
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            if '__name__' in line and '__main__' in line:
+                # Insert before this line
+                lines.insert(i, LOAD_MODEL_FUNC)
+                break
+        content = '\n'.join(lines)
     
     # Make sure 'import os' is present
     if 'import os' not in content:
