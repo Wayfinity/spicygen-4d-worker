@@ -47,7 +47,7 @@ ModelParams:
   sh_degree: 3
   source_path: "{source_path}"
   model_path: "{model_path}"
-  images: "."
+  images: "images"
   resolution: 1
   white_background: false
   data_device: "cuda"
@@ -232,12 +232,20 @@ def handler(job):
 
         # Restructure for 4C4D: it expects COLMAP at <source>/sparse/0/ and images at <source>/images/
         init_points_dir = os.path.join(OUTPUT_DIR, "init_points")
-        c4d_source = os.path.join(init_points_dir, "images")
+        c4d_source = os.path.join(init_points_dir, "4c4d_source")
+        c4d_images = os.path.join(c4d_source, "images")
+        os.makedirs(c4d_images, exist_ok=True)
         shutil.copytree(
             os.path.join(init_points_dir, "mast3r_sfm", "sparse"),
             os.path.join(c4d_source, "sparse"),
             dirs_exist_ok=True,
         )
+        for img in os.listdir(os.path.join(init_points_dir, "images")):
+            if img.endswith(".png"):
+                shutil.copy2(
+                    os.path.join(init_points_dir, "images", img),
+                    os.path.join(c4d_images, img),
+                )
 
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
         c4d_model_path = os.path.join(OUTPUT_DIR, "4c4d_model")
