@@ -115,6 +115,26 @@ The handler will automatically symlink these to `/workspace/MAtCha/mast3r/checkp
 - **faiss-gpu-cu11**: 1.10.0
 - **pytorch3d**: 0.7.4 (pre-built wheel)
 
+## Upstream Patches
+
+The Dockerfile applies patches to fix issues in the upstream MAtCha and 4C4D repositories:
+
+### MAtCha Patches (`scripts/patch_matcha.py`)
+
+**Issue**: `run_mast3r.py` uses `from_pretrained()` to load models, which goes through huggingface_hub's repo ID validation and fails with local `.pth` file paths.
+
+**Fix**: Injects a `load_model_from_pth()` function that loads models directly from local checkpoint files, bypassing huggingface_hub validation. The patched code checks if the weights path is a local `.pth` file and uses the direct loader instead of `from_pretrained()`.
+
+### 4C4D Patches (inline in Dockerfile)
+
+**Issue 1**: `scene/dataset_readers.py` has image loading disabled (`image = None`) in two places for "lazy loading" performance, but the lazy loading was never implemented.
+
+**Fix**: Uncomment `image = load_image(image_path)` and `temp_image = load_image(task['temp_path'])` to enable actual image loading.
+
+**Issue 2**: The repository includes a custom `diff-gaussian-rasterization` with `sh_degree_t` support for time-varying spherical harmonics, but the Dockerfile was installing the generic version from graphdeco-inria which overwrites it.
+
+**Fix**: Use 4C4D's custom rasterizer from `/workspace/4C4D/diff-gaussian-rasterization` instead of cloning the generic one.
+
 ## Build Optimizations
 
 - H100-only (sm_90) for faster compilation
