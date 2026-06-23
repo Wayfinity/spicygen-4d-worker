@@ -47,7 +47,7 @@ ModelParams:
   sh_degree: 3
   source_path: "{source_path}"
   model_path: "{model_path}"
-  images: "images"
+  images: "."
   resolution: 1
   white_background: false
   data_device: "cuda"
@@ -230,12 +230,21 @@ def handler(job):
         # Keep legacy output path for any downstream steps expecting point_cloud.ply.
         shutil.copyfile(matcha_points, os.path.join(OUTPUT_DIR, "init_points", "point_cloud.ply"))
 
+        # Restructure for 4C4D: it expects COLMAP at <source>/sparse/0/ and images at <source>/images/
+        init_points_dir = os.path.join(OUTPUT_DIR, "init_points")
+        c4d_source = os.path.join(init_points_dir, "images")
+        shutil.copytree(
+            os.path.join(init_points_dir, "mast3r_sfm", "sparse"),
+            os.path.join(c4d_source, "sparse"),
+            dirs_exist_ok=True,
+        )
+
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
         c4d_model_path = os.path.join(OUTPUT_DIR, "4c4d_model")
         c4d_config_path = os.path.join(OUTPUT_DIR, "4c4d_config.yaml")
         build_4c4d_config(
             config_path=c4d_config_path,
-            source_path=os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm"),
+            source_path=c4d_source,
             model_path=c4d_model_path,
             iterations=1500,
         )
