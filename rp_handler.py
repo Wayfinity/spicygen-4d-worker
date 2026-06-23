@@ -118,6 +118,30 @@ def cleanup_workspace():
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
 
+
+def setup_checkpoints():
+    """Symlink storage volume checkpoints into MAtCha directory structure."""
+    # Storage volume paths (mounted by RunPod)
+    vol_mast3r = "/workspace/mast3r/checkpoints"
+    vol_depth = "/workspace/Depth-Anything-V2/checkpoints"
+
+    # MAtCha expected paths
+    matcha_mast3r = "/workspace/MAtCha/mast3r/checkpoints"
+    matcha_depth = "/workspace/MAtCha/Depth-Anything-V2/checkpoints"
+
+    # Symlink mast3r checkpoints
+    if os.path.exists(vol_mast3r) and os.path.exists(matcha_mast3r) and not os.path.islink(matcha_mast3r):
+        shutil.rmtree(matcha_mast3r)
+        os.symlink(vol_mast3r, matcha_mast3r)
+        print("[checkpoints] Symlinked mast3r checkpoints from storage volume")
+
+    # Symlink Depth-Anything-V2 checkpoints
+    if os.path.exists(vol_depth) and os.path.exists(matcha_depth) and not os.path.islink(matcha_depth):
+        shutil.rmtree(matcha_depth)
+        os.symlink(vol_depth, matcha_depth)
+        print(
+            "[checkpoints] Symlinked Depth-Anything-V2 checkpoints from storage volume")
+
 def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
     if not os.path.exists(ply_input_path):
         raise FileNotFoundError(f"Source PLY file not found at {ply_input_path}")
@@ -174,7 +198,8 @@ def handler(job):
         return {"error": "Missing required payload data. Must include video_url, user_id, and job_id."}
 
     cleanup_workspace()
-    
+    setup_checkpoints()
+
     grid_video_path = os.path.join(INPUT_DIR, "input_grid.mp4")
     splat_output = os.path.join(OUTPUT_DIR, "scene_model_4d.splat")
 
