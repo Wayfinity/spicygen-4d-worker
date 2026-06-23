@@ -67,7 +67,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && git clone --depth 1 https://gitlab.inria.fr/bkerbl/simple-knn.git \
     && pip install --no-cache-dir ./diff-gaussian-rasterization \
     && pip install --no-cache-dir ./simple-knn \
-    && pip install --no-cache-dir /workspace/4C4D/pointops2
+    && pip install --no-cache-dir /workspace/4C4D/pointops2 \
+    && sed -i 's/# image = load_image(image_path)/image = load_image(image_path)/' /workspace/4C4D/scene/dataset_readers.py \
+    && sed -i '/^[[:space:]]*image = None$/d' /workspace/4C4D/scene/dataset_readers.py
 
 # ════════════════════════════════════════════════════════════
 # RunPod Serverless Handler
