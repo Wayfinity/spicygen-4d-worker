@@ -15,7 +15,6 @@ WORKSPACE = "/workspace"
 INPUT_DIR = os.path.join(WORKSPACE, "inputs")
 OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
 
-
 def run_cmd(cmd, cwd=None):
     print(f"[cmd] {' '.join(cmd)}")
     completed = subprocess.run(
