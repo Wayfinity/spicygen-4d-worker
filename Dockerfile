@@ -52,6 +52,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && make -j${MAX_JOBS} \
     && pip install --no-cache-dir .
 
+# ── Pre-download MAtCha model checkpoints ───────────────────
+RUN cd /workspace/MAtCha && python download_checkpoints.py
+
 # ════════════════════════════════════════════════════════════
 # 4C4D
 # ════════════════════════════════════════════════════════════
