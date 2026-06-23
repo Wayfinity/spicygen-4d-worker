@@ -203,7 +203,7 @@ def handler(job):
             run_cmd([
                 "ffmpeg", "-y", "-i", os.path.join(INPUT_DIR, f"view_{i}.mp4"),
                 "-frames:v", "1",
-                os.path.join(matcha_images_dir, f"view_{i}.png"),
+                os.path.join(matcha_images_dir, f"{i:04d}.png"),
             ])
 
         run_cmd([
