@@ -51,6 +51,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && cmake -DCMAKE_CXX_FLAGS="-I${CUDA_HOME}/include" . \
     && make -j${MAX_JOBS} \
     && pip install --no-cache-dir .
+COPY scripts/patch_matcha.py /tmp/patch_matcha.py
+RUN python3 /tmp/patch_matcha.py && rm /tmp/patch_matcha.py
 
 # ════════════════════════════════════════════════════════════
 # 4C4D
