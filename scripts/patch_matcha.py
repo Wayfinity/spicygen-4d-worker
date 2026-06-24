@@ -50,7 +50,9 @@ def main():
 {indent}    ckpt = torch.load(args.weights_path, map_location="cpu")
 {indent}    if "args" in ckpt and "model" in ckpt:
 {indent}        model_args = vars(ckpt["args"]) if hasattr(ckpt["args"], '__dict__') else ckpt["args"]
-{indent}        model = AsymmetricMASt3R(**model_args)
+{indent}        # Filter out non-constructor arguments
+{indent}        valid_args = {{k: v for k, v in model_args.items() if k not in ['model', 'state_dict', 'optimizer']}}
+{indent}        model = AsymmetricMASt3R(**valid_args)
 {indent}        model.load_state_dict(ckpt["model"])
 {indent}    elif "state_dict" in ckpt:
 {indent}        model = AsymmetricMASt3R()
