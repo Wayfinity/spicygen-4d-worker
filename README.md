@@ -22,16 +22,18 @@ docker push your-registry/spicygen-4d-worker:latest
 
 **GPU Requirement**: H100 (sm_90 architecture)
 
-**Storage Volume**: Mount a persistent volume with the following structure:
+**Storage Volume**: Mount a persistent volume at `/runpod-volume` with the following structure:
 
 ```
-/workspace/mast3r/checkpoints/
-  ├── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth (2.6 GB)
-  ├── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth (8.1 MB)
-  └── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl (257 MB)
-
-/workspace/Depth-Anything-V2/checkpoints/
-  └── depth_anything_v2_vitl.pth (1.2 GB)
+/runpod-volume/
+├── mast3r/
+│   └── checkpoints/
+│       ├── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth (2.6 GB)
+│       ├── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth (8.1 MB)
+│       └── MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl (257 MB)
+└── Depth-Anything-V2/
+    └── checkpoints/
+        └── depth_anything_v2_vitl.pth (1.2 GB)
 ```
 
 **Total storage needed**: ~4 GB for checkpoints + working space for job outputs
@@ -49,31 +51,31 @@ AWS_BUCKET_NAME=your-bucket-name
 
 ```bash
 # Create directories on storage volume
-mkdir -p /path/to/volume/mast3r/checkpoints
-mkdir -p /path/to/volume/Depth-Anything-V2/checkpoints
+mkdir -p /runpod-volume/mast3r/checkpoints
+mkdir -p /runpod-volume/Depth-Anything-V2/checkpoints
 
 # Download MAtCha checkpoints
-wget -P /path/to/volume/mast3r/checkpoints/ \
+wget -P /runpod-volume/mast3r/checkpoints/ \
   https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
 
-wget -P /path/to/volume/mast3r/checkpoints/ \
+wget -P /runpod-volume/mast3r/checkpoints/ \
   https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth
 
-wget -P /path/to/volume/mast3r/checkpoints/ \
+wget -P /runpod-volume/mast3r/checkpoints/ \
   https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl
 
 # Download Depth-Anything-V2 checkpoint
-wget -P /path/to/volume/Depth-Anything-V2/checkpoints/ \
+wget -P /runpod-volume/Depth-Anything-V2/checkpoints/ \
   https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth
 ```
 
 ### RunPod Volume Mount Points
 
-When creating the serverless endpoint, mount the volume to these paths:
-- `/workspace/mast3r` → your volume's `mast3r` directory
-- `/workspace/Depth-Anything-V2` → your volume's `Depth-Anything-V2` directory
+When creating the serverless endpoint, mount the network volume to `/runpod-volume`.
 
-The handler will automatically symlink these to `/workspace/MAtCha/mast3r/checkpoints` and `/workspace/MAtCha/Depth-Anything-V2/checkpoints` on job start.
+The handler will automatically symlink:
+- `/runpod-volume/mast3r/checkpoints` → `/workspace/MAtCha/mast3r/checkpoints`
+- `/runpod-volume/Depth-Anything-V2/checkpoints` → `/workspace/MAtCha/Depth-Anything-V2/checkpoints`
 
 ## Job Input Format
 

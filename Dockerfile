@@ -36,7 +36,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ════════════════════════════════════════════════════════════
 # MAtCha
 # ════════════════════════════════════════════════════════════
-RUN git clone --depth 1 https://github.com/anttwo/MAtCha.git /workspace/MAtCha
+RUN git clone --depth 1 https://github.com/anttwo/MAtCha.git /workspace/MAtCha \
+    && mkdir -p /workspace/MAtCha/mast3r/checkpoints \
+    && mkdir -p /workspace/MAtCha/Depth-Anything-V2/checkpoints
 
 # ── All MAtCha CUDA extensions in one layer ─────────────────
 RUN --mount=type=cache,target=/root/.cache/pip \

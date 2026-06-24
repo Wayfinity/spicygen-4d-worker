@@ -121,9 +121,9 @@ def cleanup_workspace():
 
 def setup_checkpoints():
     """Symlink storage volume checkpoints into MAtCha directory structure."""
-    # Storage volume paths (mounted by RunPod)
-    vol_mast3r = "/workspace/mast3r/checkpoints"
-    vol_depth = "/workspace/Depth-Anything-V2/checkpoints"
+    # Storage volume paths (mounted by RunPod at /runpod-volume)
+    vol_mast3r = "/runpod-volume/mast3r/checkpoints"
+    vol_depth = "/runpod-volume/Depth-Anything-V2/checkpoints"
 
     # MAtCha expected paths
     matcha_mast3r = "/workspace/MAtCha/mast3r/checkpoints"
