@@ -164,6 +164,7 @@ def run_colmap(images_dir: str, output_dir: str):
         "--database_path", os.path.join(output_dir, "database.db"),
         "--image_path", images_dir,
         "--ImageReader.single_camera", "1",
+        "--ImageReader.camera_model", "PINHOLE",
         "--SiftExtraction.use_gpu", "1",
     ])
 
