@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-graph-dev libboost-system-dev libboost-test-dev \
     libflann-dev libfreeimage-dev libgflags-dev libglew-dev \
     libglfw3-dev libgoogle-glog-dev libmetis-dev libsqlite3-dev \
-    libceres-dev \
+    libceres-dev libsuitesparse-dev libqt5-opengl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -27,7 +27,7 @@ RUN git clone https://github.com/colmap/colmap.git /tmp/colmap \
     && cd /tmp/colmap \
     && git checkout 3.9.1 \
     && mkdir build && cd build \
-    && cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=90 \
+    && cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=90 -DCOLMAP_BUILD_GUI=OFF \
     && ninja -j${MAX_JOBS} \
     && ninja install \
     && rm -rf /tmp/colmap
