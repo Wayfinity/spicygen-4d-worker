@@ -9,12 +9,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
     MAX_JOBS=4
 
-# ── System dependencies + python symlink ────────────────────
+# ── System dependencies + python symlink ───────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip python3-dev git ffmpeg libgl1-mesa-glx \
     libglib2.0-0 wget cmake libcgal-dev libeigen3-dev \
+    libboost-program-options-dev libboost-filesystem-dev \
+    libboost-graph-dev libboost-system-dev libboost-test-dev \
+    libflann-dev libfreeimage-dev libgflags-dev libglew-dev \
+    libglfw3-dev libgoogle-glog-dev libmetis-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
+
+# ── COLMAP from source ─────────────────────────────────────
+RUN git clone https://github.com/colmap/colmap.git /tmp/colmap \
+    && cd /tmp/colmap \
+    && git checkout 3.9.1 \
+    && mkdir build && cd build \
+    && cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=90 \
+    && ninja -j${MAX_JOBS} \
+    && ninja install \
+    && rm -rf /tmp/colmap
 
 WORKDIR /workspace
 
@@ -32,27 +46,6 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir runpod==1.7.0
-
-# ════════════════════════════════════════════════════════════
-# MAtCha
-# ════════════════════════════════════════════════════════════
-RUN git clone --depth 1 https://github.com/anttwo/MAtCha.git /workspace/MAtCha \
-    && mkdir -p /workspace/MAtCha/mast3r/checkpoints \
-    && mkdir -p /workspace/MAtCha/Depth-Anything-V2/checkpoints
-
-# ── All MAtCha CUDA extensions in one layer ─────────────────
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --no-build-isolation /workspace/MAtCha/mast3r/dust3r/croco/models/curope \
-    && cd /workspace/MAtCha/mast3r/asmk \
-    && cythonize cython/*.pyx \
-    && pip install --no-cache-dir . \
-    && cd /workspace/MAtCha/2d-gaussian-splatting/submodules \
-    && pip install --no-cache-dir ./diff-surfel-rasterization \
-    && pip install --no-cache-dir ./simple-knn \
-    && cd tetra-triangulation \
-    && cmake -DCMAKE_CXX_FLAGS="-I${CUDA_HOME}/include" . \
-    && make -j${MAX_JOBS} \
-    && pip install --no-cache-dir .
 
 # ════════════════════════════════════════════════════════════
 # 4C4D

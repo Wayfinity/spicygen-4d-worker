@@ -91,27 +91,6 @@ def find_latest_4c4d_ply(model_path: str):
     return max(candidates, key=iteration_key)
 
 
-def find_matcha_points_file(output_root: str):
-    preferred_paths = [
-        os.path.join(output_root, "mast3r_sfm", "points.ply"),
-        os.path.join(output_root, "mast3r_sfm", "point_cloud.ply"),
-        os.path.join(output_root, "points.ply"),
-        os.path.join(output_root, "point_cloud.ply"),
-    ]
-    for path in preferred_paths:
-        if os.path.exists(path):
-            return path
-
-    candidates = glob.glob(os.path.join(output_root, "**", "points.ply"), recursive=True)
-    candidates.extend(glob.glob(os.path.join(output_root, "**", "point_cloud.ply"), recursive=True))
-    if candidates:
-        return sorted(set(candidates))[0]
-
-    raise FileNotFoundError(
-        f"MAtCha did not produce a point cloud under {output_root}. "
-        f"Checked: {', '.join(preferred_paths)}"
-    )
-
 def cleanup_workspace():
     for path in [INPUT_DIR, OUTPUT_DIR]:
         if os.path.exists(path):
@@ -163,6 +142,51 @@ def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
                 q = q / norm
             f.write(struct.pack('BBBB', int((q[0]+1)*127.5), int((q[1]+1)*127.5), int((q[2]+1)*127.5), int((q[3]+1)*127.5)))
 
+
+def extract_frames(video_path: str, output_dir: str, fps: int = 4):
+    """Extract frames from video at specified FPS."""
+    os.makedirs(output_dir, exist_ok=True)
+    run_cmd([
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"fps={fps}",
+        os.path.join(output_dir, "frame_%04d.png"),
+    ])
+    return sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
+
+
+def run_colmap(images_dir: str, output_dir: str):
+    """Run COLMAP SfM pipeline to estimate camera poses."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Feature extraction
+    run_cmd([
+        "colmap", "feature_extractor",
+        "--database_path", os.path.join(output_dir, "database.db"),
+        "--image_path", images_dir,
+        "--ImageReader.single_camera", "1",
+        "--SiftExtraction.use_gpu", "1",
+    ])
+
+    # Feature matching
+    run_cmd([
+        "colmap", "exhaustive_matcher",
+        "--database_path", os.path.join(output_dir, "database.db"),
+        "--SiftMatching.use_gpu", "1",
+    ])
+
+    # Reconstruction
+    sparse_dir = os.path.join(output_dir, "sparse", "0")
+    os.makedirs(sparse_dir, exist_ok=True)
+    run_cmd([
+        "colmap", "mapper",
+        "--database_path", os.path.join(output_dir, "database.db"),
+        "--image_path", images_dir,
+        "--output_path", os.path.join(output_dir, "sparse"),
+    ])
+
+    return sparse_dir
+
+
 def handler(job):
     job_input = job.get("input", {})
 
@@ -175,82 +199,43 @@ def handler(job):
 
     cleanup_workspace()
 
-    grid_video_path = os.path.join(INPUT_DIR, "input_grid.mp4")
+    video_path = os.path.join(INPUT_DIR, "input_video.mp4")
     splat_output = os.path.join(OUTPUT_DIR, "scene_model_4d.splat")
 
     try:
         print(f"[{job_id}] Downloading source video...")
-        urllib.request.urlretrieve(video_url, grid_video_path)
+        urllib.request.urlretrieve(video_url, video_path)
 
-        print(f"[{job_id}] Slicing grid via FFmpeg into agnostic indexed views...")
-        run_cmd([
-            "ffmpeg", "-y", "-i", grid_video_path,
-            "-filter_complex",
-            "[0:v]crop=iw/2:ih/2:0:0[tl];[0:v]crop=iw/2:ih/2:iw/2:0[tr];"
-            "[0:v]crop=iw/2:ih/2:0:ih/2[bl];[0:v]crop=iw/2:ih/2:iw/2:ih/2[br]",
-            "-map", "[tl]", os.path.join(INPUT_DIR, "view_0.mp4"),
-            "-map", "[tr]", os.path.join(INPUT_DIR, "view_1.mp4"),
-            "-map", "[bl]", os.path.join(INPUT_DIR, "view_2.mp4"),
-            "-map", "[br]", os.path.join(INPUT_DIR, "view_3.mp4"),
-        ])
+        # Extract frames at 4 FPS
+        print(f"[{job_id}] Extracting frames from orbiting video...")
+        frames_dir = os.path.join(INPUT_DIR, "frames")
+        frames = extract_frames(video_path, frames_dir, fps=4)
+        print(f"[{job_id}] Extracted {len(frames)} frames")
 
-        print(f"[{job_id}] Running MAtCha SfM initialization...")
-        matcha_images_dir = os.path.join(OUTPUT_DIR, "init_points", "images")
-        os.makedirs(matcha_images_dir, exist_ok=True)
-        matcha_output_dir = os.path.join(OUTPUT_DIR, "init_points", "mast3r_sfm")
+        if len(frames) < 10:
+            return {"error": f"Too few frames extracted ({len(frames)}). Need at least 10 for reliable reconstruction."}
 
-        for i in range(4):
-            run_cmd([
-                "ffmpeg", "-y", "-i", os.path.join(INPUT_DIR, f"view_{i}.mp4"),
-                "-frames:v", "1",
-                os.path.join(matcha_images_dir, f"{i:04d}.png"),
-            ])
+        # Run COLMAP for camera pose estimation
+        print(f"[{job_id}] Running COLMAP SfM...")
+        colmap_dir = os.path.join(OUTPUT_DIR, "colmap")
+        sparse_dir = run_colmap(frames_dir, colmap_dir)
 
-        # Use checkpoint paths directly from storage volume
-        mast3r_weights = "/runpod-volume/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
-        mast3r_retrieval = "/runpod-volume/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
-
-        run_cmd([
-            "python3", "/workspace/MAtCha/mast3r/run_mast3r.py",
-            "--scene_path", matcha_images_dir,
-            "--output_dir", matcha_output_dir,
-            "--weights_path", mast3r_weights,
-            "--retrieval_model", mast3r_retrieval,
-            "--min_conf_thr", "0.0",
-            "--matching_conf_thr", "0.0",
-            "--n_coarse_iterations", "1000",
-            "--n_refinement_iterations", "1000",
-            "--TSDF_thresh", "0.0",
-            "--fix_principal_point",
-            "--n_images", "4",
-            "--image_size", "512",
-            "--max_window_size", "20",
-            "--max_refid", "10",
-            "--output_conf_thr", "0.1",
-        ], cwd="/workspace/MAtCha")
-
-        matcha_points = find_matcha_points_file(os.path.join(OUTPUT_DIR, "init_points"))
-
-        # Keep legacy output path for any downstream steps expecting point_cloud.ply.
-        shutil.copyfile(matcha_points, os.path.join(OUTPUT_DIR, "init_points", "point_cloud.ply"))
-
-        # Restructure for 4C4D: it expects COLMAP at <source>/sparse/0/ and images at <source>/images/
-        init_points_dir = os.path.join(OUTPUT_DIR, "init_points")
-        c4d_source = os.path.join(init_points_dir, "4c4d_source")
+        # Prepare 4C4D input structure
+        print(f"[{job_id}] Preparing 4C4D input...")
+        c4d_source = os.path.join(OUTPUT_DIR, "4c4d_source")
         c4d_images = os.path.join(c4d_source, "images")
         os.makedirs(c4d_images, exist_ok=True)
-        shutil.copytree(
-            os.path.join(init_points_dir, "mast3r_sfm", "sparse"),
-            os.path.join(c4d_source, "sparse"),
-            dirs_exist_ok=True,
-        )
-        for img in os.listdir(os.path.join(init_points_dir, "images")):
-            if img.endswith(".png"):
-                shutil.copy2(
-                    os.path.join(init_points_dir, "images", img),
-                    os.path.join(c4d_images, img),
-                )
 
+        # Copy COLMAP sparse reconstruction
+        shutil.copytree(sparse_dir, os.path.join(
+            c4d_source, "sparse", "0"), dirs_exist_ok=True)
+
+        # Copy frames as images
+        for frame in frames:
+            shutil.copy2(frame, os.path.join(
+                c4d_images, os.path.basename(frame)))
+
+        # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
         c4d_model_path = os.path.join(OUTPUT_DIR, "4c4d_model")
         c4d_config_path = os.path.join(OUTPUT_DIR, "4c4d_config.yaml")
@@ -266,30 +251,26 @@ def handler(job):
             "--save_iterations", "1500",
         ], cwd="/workspace/4C4D")
 
+        # Convert PLY to SPLAT
         print(f"[{job_id}] Converting PLY to binary SPLAT format...")
         ply_input = find_latest_4c4d_ply(c4d_model_path)
         convert_ply_to_splat(ply_input, splat_output)
-        
-        # --- Batch S3 Upload Logic ---
-        print(f"[{job_id}] Uploading all assets to AWS S3...")
+
+        # Upload to S3
+        print(f"[{job_id}] Uploading to AWS S3...")
         s3_client = boto3.client(
             's3',
             aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
             region_name=os.environ.get("AWS_REGION", "us-east-1")
         )
-        
+
         bucket_name = os.environ.get(
             "AWS_BUCKET_NAME", "your-production-bucket-name")
         base_s3_folder = f"renders/{user_id}/{job_id}"
 
-        # Agnostic view file names matching the generated crops
         files_to_upload = [
-            ("input_grid.mp4", grid_video_path),
-            ("view_0.mp4", os.path.join(INPUT_DIR, "view_0.mp4")),
-            ("view_1.mp4", os.path.join(INPUT_DIR, "view_1.mp4")),
-            ("view_2.mp4", os.path.join(INPUT_DIR, "view_2.mp4")),
-            ("view_3.mp4", os.path.join(INPUT_DIR, "view_3.mp4")),
+            ("input_video.mp4", video_path),
             ("scene_model_4d.splat", splat_output)
         ]
 
@@ -308,7 +289,7 @@ def handler(job):
                         Params={'Bucket': bucket_name, 'Key': s3_key},
                         ExpiresIn=3600
                     )
-        
+
         print(f"[{job_id}] Process complete.")
         return {
             "status": "COMPLETED",
