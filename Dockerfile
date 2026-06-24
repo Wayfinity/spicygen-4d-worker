@@ -60,8 +60,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN git clone --depth 1 --recursive https://github.com/yangzf-1023/4C4D.git /workspace/4C4D
 
 # ── All 4C4D extensions in one layer ────────────────────────
+# fused-ssim uses CUDA_ARCHITECTURES env var (not TORCH_CUDA_ARCH_LIST)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --no-build-isolation /workspace/4C4D/fused-ssim-main \
+    CUDA_ARCHITECTURES="90" pip install --no-cache-dir --no-build-isolation /workspace/4C4D/fused-ssim-main \
     && pip install --no-cache-dir /workspace/4C4D/diff-gaussian-rasterization \
     && mkdir -p /workspace/4C4D/submodules \
     && cd /workspace/4C4D/submodules \
