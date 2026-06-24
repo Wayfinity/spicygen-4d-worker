@@ -12,37 +12,19 @@ import re
 
 RUN_MAST3R_PATH = "/workspace/MAtCha/mast3r/run_mast3r.py"
 
-# The function to inject
-LOAD_MODEL_FUNC = '''
-def load_model_from_pth(path, device):
-    """Load AsymmetricMASt3R model directly from a .pth checkpoint file."""
-    import torch
-    from mast3r.model import AsymmetricMASt3R
-    ckpt = torch.load(path, map_location="cpu")
-    # Handle different checkpoint formats
-    if "args" in ckpt and "model" in ckpt:
-        model = AsymmetricMASt3R(**ckpt["args"])
-        model.load_state_dict(ckpt["model"])
-    elif "state_dict" in ckpt:
-        model = AsymmetricMASt3R()
-        model.load_state_dict(ckpt["state_dict"])
-    else:
-        # Try loading as state dict directly
-        model = AsymmetricMASt3R()
-        model.load_state_dict(ckpt)
-    return model.to(device)
-
-'''
-
 def main():
-    print(f"Patching {RUN_MAST3R_PATH}...")
+    print(f"[PATCH] Starting MAtCha patch for {RUN_MAST3R_PATH}...")
     
-    with open(RUN_MAST3R_PATH, 'r') as f:
-        content = f.read()
+    try:
+        with open(RUN_MAST3R_PATH, 'r') as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"[PATCH] ERROR: File not found: {RUN_MAST3R_PATH}")
+        sys.exit(1)
     
     # Check if already patched
     if "load_model_from_pth" in content:
-        print("Already patched, skipping.")
+        print("[PATCH] Already patched, skipping.")
         return
     
     # Find the line with model = AsymmetricMASt3R.from_pretrained
@@ -50,47 +32,55 @@ def main():
     match = re.search(pattern, content, re.MULTILINE)
     
     if not match:
-        print("ERROR: Could not find model loading line")
+        print("[PATCH] ERROR: Could not find model loading line")
+        print("[PATCH] Searching for similar patterns...")
+        for line_num, line in enumerate(content.split('\n'), 1):
+            if 'AsymmetricMASt3R' in line and 'from_pretrained' in line:
+                print(f"[PATCH] Found at line {line_num}: {line.strip()}")
         sys.exit(1)
 
     indent = match.group(1)
-    print(f"Found line with indent: {repr(indent)}")
+    print(f"[PATCH] Found line with indent: {repr(indent)}")
 
-    # Create replacement code
+    # Create the replacement
     replacement = f'''{indent}# Handle local .pth files directly
 {indent}if args.weights_path.endswith(".pth") and os.path.exists(args.weights_path):
-{indent}    model = load_model_from_pth(args.weights_path, device)
+{indent}    import torch
+{indent}    from mast3r.model import AsymmetricMASt3R
+{indent}    ckpt = torch.load(args.weights_path, map_location="cpu")
+{indent}    if "args" in ckpt and "model" in ckpt:
+{indent}        model = AsymmetricMASt3R(**ckpt["args"])
+{indent}        model.load_state_dict(ckpt["model"])
+{indent}    elif "state_dict" in ckpt:
+{indent}        model = AsymmetricMASt3R()
+{indent}        model.load_state_dict(ckpt["state_dict"])
+{indent}    else:
+{indent}        model = AsymmetricMASt3R()
+{indent}        model.load_state_dict(ckpt)
+{indent}    model = model.to(device)
 {indent}else:
 {indent}    model = AsymmetricMASt3R.from_pretrained(args.weights_path).to(device)'''
     
     # Replace the line
-    content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
-    
-    # Insert the helper function before the if __name__ block
-    if "__name__" in content:
-        # Find the line with if __name__ == "__main__":
-        lines = content.split('\n')
-        for i, line in enumerate(lines):
-            if '__name__' in line and '__main__' in line:
-                # Insert before this line
-                lines.insert(i, LOAD_MODEL_FUNC)
-                break
-        content = '\n'.join(lines)
+    new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
     
     # Make sure 'import os' is present
-    if 'import os' not in content:
-        # Add it after the first import
-        lines = content.split('\n')
+    if 'import os' not in new_content:
+        print("[PATCH] Adding 'import os'...")
+        lines = new_content.split('\n')
         for i, line in enumerate(lines):
             if line.startswith('import '):
                 lines.insert(i + 1, 'import os')
                 break
-        content = '\n'.join(lines)
+        new_content = '\n'.join(lines)
     
+    # Write back
     with open(RUN_MAST3R_PATH, 'w') as f:
-        f.write(content)
+        f.write(new_content)
     
-    print("Successfully patched run_mast3r.py")
+    print("[PATCH] Successfully patched run_mast3r.py")
+    print(
+        f"[PATCH] Verification: 'load_model_from_pth' in file: {'load_model_from_pth' in new_content}")
 
 if __name__ == "__main__":
     main()

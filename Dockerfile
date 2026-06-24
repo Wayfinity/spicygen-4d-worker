@@ -52,7 +52,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && make -j${MAX_JOBS} \
     && pip install --no-cache-dir .
 COPY scripts/patch_matcha.py /tmp/patch_matcha.py
-RUN python3 /tmp/patch_matcha.py && rm /tmp/patch_matcha.py
+RUN python3 /tmp/patch_matcha.py && \
+    echo "=== Verifying MAtCha patch ===" && \
+    grep -n "Handle local .pth files" /workspace/MAtCha/mast3r/run_mast3r.py && \
+    echo "=== MAtCha patch verified ===" && \
+    rm /tmp/patch_matcha.py
 
 # ════════════════════════════════════════════════════════════
 # 4C4D
@@ -69,7 +73,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && pip install --no-cache-dir ./simple-knn \
     && pip install --no-cache-dir /workspace/4C4D/pointops2
 COPY scripts/patch_4c4d.py /tmp/patch_4c4d.py
-RUN python3 /tmp/patch_4c4d.py && rm /tmp/patch_4c4d.py
+RUN python3 /tmp/patch_4c4d.py && \
+    echo "=== Verifying 4C4D patch ===" && \
+    grep -n "image = load_image" /workspace/4C4D/scene/dataset_readers.py | head -2 && \
+    echo "=== 4C4D patch verified ===" && \
+    rm /tmp/patch_4c4d.py
 
 # ════════════════════════════════════════════════════════════
 # RunPod Serverless Handler
