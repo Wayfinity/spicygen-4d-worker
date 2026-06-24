@@ -13,38 +13,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip python3-dev git ffmpeg libgl1-mesa-glx \
     libglib2.0-0 wget cmake libcgal-dev libeigen3-dev \
-    swig libopenblas-dev libgflags-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
 WORKDIR /workspace
 
-# ── PyTorch 2.0.1 + CUDA 11.8 + pytorch3d ──────────────────
+# ── PyTorch 2.0.1 + CUDA 11.8 + pytorch3d + faiss ──────────
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir \
     torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
     --index-url https://download.pytorch.org/whl/cu118 \
     && pip install --no-cache-dir pytorch3d==0.7.4 \
-       -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu118_pyt201/download.html
-
-# ── Build FAISS from source with H100 (sm_90) support ───────
-# Pre-built FAISS packages only support CUDA 11.4/12.1, not 11.8
-RUN git clone --depth 1 --recursive https://github.com/facebookresearch/faiss.git /tmp/faiss \
-    && cd /tmp/faiss \
-    && cmake -B build \
-         -DFAISS_ENABLE_GPU=ON \
-         -DFAISS_ENABLE_PYTHON=ON \
-         -DCMAKE_CUDA_ARCHITECTURES="90" \
-         -DCUDAToolkit_ROOT=/usr/local/cuda \
-         -DBLA_VENDOR=OpenBLAS \
-         -DBUILD_SHARED_LIBS=OFF \
-         -DFAISS_ENABLE_C_API=OFF \
-         -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-    && make -C build -j${MAX_JOBS} faiss \
-    && make -C build -j${MAX_JOBS} swigfaiss \
-    && cd build/faiss/python \
-    && python3 setup.py install \
-    && rm -rf /tmp/faiss
+       -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu118_pyt201/download.html \
+    && pip install --no-cache-dir faiss-cpu==1.10.0
 
 # ── Serverless handler dependencies ─────────────────────────
 COPY requirements.txt .
