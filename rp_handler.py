@@ -118,58 +118,6 @@ def cleanup_workspace():
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
 
-
-def setup_checkpoints():
-    """Symlink storage volume checkpoints into MAtCha directory structure."""
-    # Storage volume paths (mounted by RunPod at /runpod-volume)
-    vol_mast3r = "/runpod-volume/mast3r/checkpoints"
-    vol_depth = "/runpod-volume/Depth-Anything-V2/checkpoints"
-
-    # MAtCha expected paths
-    matcha_mast3r = "/workspace/MAtCha/mast3r/checkpoints"
-    matcha_depth = "/workspace/MAtCha/Depth-Anything-V2/checkpoints"
-
-    print(
-        f"[checkpoints] Debug: vol_mast3r exists: {os.path.exists(vol_mast3r)}")
-    print(
-        f"[checkpoints] Debug: matcha_mast3r exists: {os.path.exists(matcha_mast3r)}")
-    print(
-        f"[checkpoints] Debug: matcha_mast3r is symlink: {os.path.islink(matcha_mast3r)}")
-
-    # Symlink mast3r checkpoints
-    if os.path.exists(vol_mast3r) and os.path.exists(matcha_mast3r) and not os.path.islink(matcha_mast3r):
-        shutil.rmtree(matcha_mast3r)
-        os.symlink(vol_mast3r, matcha_mast3r)
-        print("[checkpoints] Symlinked mast3r checkpoints from storage volume")
-    else:
-        print(f"[checkpoints] WARNING: Could not symlink mast3r checkpoints")
-        print(f"[checkpoints] vol_mast3r exists: {os.path.exists(vol_mast3r)}")
-        print(
-            f"[checkpoints] matcha_mast3r exists: {os.path.exists(matcha_mast3r)}")
-        print(
-            f"[checkpoints] matcha_mast3r is symlink: {os.path.islink(matcha_mast3r)}")
-
-    print(
-        f"[checkpoints] Debug: vol_depth exists: {os.path.exists(vol_depth)}")
-    print(
-        f"[checkpoints] Debug: matcha_depth exists: {os.path.exists(matcha_depth)}")
-    print(
-        f"[checkpoints] Debug: matcha_depth is symlink: {os.path.islink(matcha_depth)}")
-
-    # Symlink Depth-Anything-V2 checkpoints
-    if os.path.exists(vol_depth) and os.path.exists(matcha_depth) and not os.path.islink(matcha_depth):
-        shutil.rmtree(matcha_depth)
-        os.symlink(vol_depth, matcha_depth)
-        print(
-            "[checkpoints] Symlinked Depth-Anything-V2 checkpoints from storage volume")
-    else:
-        print(f"[checkpoints] WARNING: Could not symlink Depth-Anything-V2 checkpoints")
-        print(f"[checkpoints] vol_depth exists: {os.path.exists(vol_depth)}")
-        print(
-            f"[checkpoints] matcha_depth exists: {os.path.exists(matcha_depth)}")
-        print(
-            f"[checkpoints] matcha_depth is symlink: {os.path.islink(matcha_depth)}")
-
 def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
     if not os.path.exists(ply_input_path):
         raise FileNotFoundError(f"Source PLY file not found at {ply_input_path}")
@@ -226,7 +174,6 @@ def handler(job):
         return {"error": "Missing required payload data. Must include video_url, user_id, and job_id."}
 
     cleanup_workspace()
-    setup_checkpoints()
 
     grid_video_path = os.path.join(INPUT_DIR, "input_grid.mp4")
     splat_output = os.path.join(OUTPUT_DIR, "scene_model_4d.splat")
@@ -259,12 +206,16 @@ def handler(job):
                 os.path.join(matcha_images_dir, f"{i:04d}.png"),
             ])
 
+        # Use checkpoint paths directly from storage volume
+        mast3r_weights = "/runpod-volume/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+        mast3r_retrieval = "/runpod-volume/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
+
         run_cmd([
             "python3", "/workspace/MAtCha/mast3r/run_mast3r.py",
             "--scene_path", matcha_images_dir,
             "--output_dir", matcha_output_dir,
-            "--weights_path", "/workspace/MAtCha/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth",
-            "--retrieval_model", "/workspace/MAtCha/mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth",
+            "--weights_path", mast3r_weights,
+            "--retrieval_model", mast3r_retrieval,
             "--min_conf_thr", "0.0",
             "--matching_conf_thr", "0.0",
             "--n_coarse_iterations", "1000",
