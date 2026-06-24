@@ -75,6 +75,10 @@ RUN python3 /tmp/patch_4c4d.py && \
     echo "=== 4C4D patch verified ===" && \
     rm /tmp/patch_4c4d.py
 
+# ── Patch 4C4D train.py for PyTorch 2.0.1 compatibility ─────
+COPY scripts/patch_4c4d_train.py /tmp/patch_4c4d_train.py
+RUN python3 /tmp/patch_4c4d_train.py && rm /tmp/patch_4c4d_train.py
+
 # ════════════════════════════════════════════════════════════
 # RunPod Serverless Handler
 # ════════════════════════════════════════════════════════════
