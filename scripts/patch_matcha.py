@@ -49,7 +49,8 @@ def main():
 {indent}    from mast3r.model import AsymmetricMASt3R
 {indent}    ckpt = torch.load(args.weights_path, map_location="cpu")
 {indent}    if "args" in ckpt and "model" in ckpt:
-{indent}        model = AsymmetricMASt3R(**ckpt["args"])
+{indent}        model_args = vars(ckpt["args"]) if hasattr(ckpt["args"], '__dict__') else ckpt["args"]
+{indent}        model = AsymmetricMASt3R(**model_args)
 {indent}        model.load_state_dict(ckpt["model"])
 {indent}    elif "state_dict" in ckpt:
 {indent}        model = AsymmetricMASt3R()
