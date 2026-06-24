@@ -12,7 +12,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ── System dependencies + python symlink ───────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip python3-dev git ffmpeg libgl1-mesa-glx \
-    libglib2.0-0 wget cmake libcgal-dev libeigen3-dev \
+    libglib2.0-0 wget cmake ninja-build gcc g++ \
+    libcgal-dev libeigen3-dev \
     libboost-program-options-dev libboost-filesystem-dev \
     libboost-graph-dev libboost-system-dev libboost-test-dev \
     libflann-dev libfreeimage-dev libgflags-dev libglew-dev \
