@@ -52,6 +52,9 @@ def main():
 {indent}        model_args = vars(ckpt["args"]) if hasattr(ckpt["args"], '__dict__') else ckpt["args"]
 {indent}        # Filter out non-constructor arguments
 {indent}        valid_args = {{k: v for k, v in model_args.items() if k not in ['model', 'state_dict', 'optimizer']}}
+{indent}        # Fix img_size if it's an int instead of tuple
+{indent}        if 'img_size' in valid_args and isinstance(valid_args['img_size'], int):
+{indent}            valid_args['img_size'] = (valid_args['img_size'], valid_args['img_size'])
 {indent}        model = AsymmetricMASt3R(**valid_args)
 {indent}        model.load_state_dict(ckpt["model"])
 {indent}    elif "state_dict" in ckpt:
