@@ -1,4 +1,4 @@
-# ── RunPod serverless (installed separately due to tomlkit conflict with gradio) ──
+# ── RunPod serverless ──
 boto3==1.34.68
 
 # ── Core handler dependencies ──
@@ -7,19 +7,6 @@ plyfile==1.0.3
 opencv-python-headless==4.9.0.80
 scipy==1.13.1
 tqdm==4.66.2
-
-# ── MAtCha shared dependencies (pinned to match MAtCha environment.yml) ──
-einops==0.8.1
-gradio>=5.0.0
-scikit-learn>=1.4.0
-huggingface-hub==0.29.3
-roma>=1.5.0
-pyyaml==6.0
-pyquaternion==0.9.9
-configargparse==1.7
-mediapy==1.1.2
-absl-py==2.1.0
-pyglet<2
 
 # ── 4C4D shared dependencies ──
 trimesh>=4.0.0
