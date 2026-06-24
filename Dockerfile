@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-graph-dev libboost-system-dev libboost-test-dev \
     libflann-dev libfreeimage-dev libgflags-dev libglew-dev \
     libglfw3-dev libgoogle-glog-dev libmetis-dev libsqlite3-dev \
+    libceres-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
