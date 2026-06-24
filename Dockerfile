@@ -67,13 +67,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && cd /workspace/4C4D/submodules \
     && git clone --depth 1 https://gitlab.inria.fr/bkerbl/simple-knn.git \
     && pip install --no-cache-dir ./simple-knn \
-    && pip install --no-cache-dir /workspace/4C4D/pointops2 \
-    && python3 -c " \
-        f='/workspace/4C4D/scene/dataset_readers.py'; \
-        c=open(f).read(); \
-        c=c.replace('# image = load_image(image_path)\n        image = None', 'image = load_image(image_path)'); \
-        c=c.replace(\"# temp_image = load_image(task['temp_path'])\n            temp_image = None\", \"temp_image = load_image(task['temp_path'])\"); \
-        open(f,'w').write(c)"
+    && pip install --no-cache-dir /workspace/4C4D/pointops2
+COPY scripts/patch_4c4d.py /tmp/patch_4c4d.py
+RUN python3 /tmp/patch_4c4d.py && rm /tmp/patch_4c4d.py
 
 # ════════════════════════════════════════════════════════════
 # RunPod Serverless Handler
