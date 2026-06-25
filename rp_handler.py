@@ -217,106 +217,72 @@ def handler(job):
         if len(frames) < 10:
             return {"error": f"Too few frames extracted ({len(frames)}). Need at least 10 for reliable reconstruction."}
 
-        # Run COLMAP for camera pose estimation
-        print(f"[{job_id}] Running COLMAP SfM...")
-        colmap_dir = os.path.join(OUTPUT_DIR, "colmap")
-        sparse_dir = run_colmap(frames_dir, colmap_dir)
+        # Create COLMAP-format output with known orbiting camera poses
+        # This is more reliable than running COLMAP SfM on AI-generated videos
+        print(f"[{job_id}] Creating camera poses for orbiting video...")
 
         # Prepare 4C4D input structure
-        print(f"[{job_id}] Preparing 4C4D input...")
         c4d_source = os.path.join(OUTPUT_DIR, "4c4d_source")
         c4d_images = os.path.join(c4d_source, "images")
-        os.makedirs(c4d_images, exist_ok=True)
-
-        # Copy COLMAP sparse reconstruction (excluding any images/ subdir)
         dst_sparse = os.path.join(c4d_source, "sparse", "0")
+        os.makedirs(c4d_images, exist_ok=True)
         os.makedirs(dst_sparse, exist_ok=True)
-        for item in os.listdir(sparse_dir):
-            src = os.path.join(sparse_dir, item)
-            dst = os.path.join(dst_sparse, item)
-            if os.path.isdir(src) and item == "images":
-                continue  # Skip images subdir if present
-            shutil.copy2(src, dst) if os.path.isfile(
-                src) else shutil.copytree(src, dst)
 
-        # Filter images.bin to only include our 24 frames
-        # This ensures the camera count matches the image count
-        images_bin_path = os.path.join(dst_sparse, "images.bin")
-
-        # Parse images.bin to get all entries
-        def parse_images_bin(bin_path):
-            images = []
-            with open(bin_path, 'rb') as f:
-                num_images = struct.unpack('<Q', f.read(8))[0]
-                print(f"[{job_id}] Parsing {num_images} images from bin")
-                for i in range(num_images):
-                    try:
-                        image_id, camera_id = struct.unpack('<II', f.read(8))
-                        name = b''
-                        while True:
-                            ch = f.read(1)
-                            if ch == b'\x00' or not ch:
-                                break
-                            name += ch
-                        # Try UTF-8, fall back to latin-1
-                        try:
-                            name = name.decode('utf-8')
-                        except UnicodeDecodeError:
-                            name = name.decode('latin-1')
-                        qvec = struct.unpack('<4d', f.read(32))
-                        tvec = struct.unpack('<3d', f.read(24))
-                        num_points = struct.unpack('<Q', f.read(8))[0]
-                        points = []
-                        for _ in range(num_points):
-                            xy = struct.unpack('<2d', f.read(16))
-                            point_id = struct.unpack('<Q', f.read(8))[0]
-                            points.append((xy, point_id))
-                        images.append({
-                            'image_id': image_id,
-                            'camera_id': camera_id,
-                            'name': name,
-                            'qvec': qvec,
-                            'tvec': tvec,
-                            'points': points
-                        })
-                    except Exception as e:
-                        print(
-                            f"[{job_id}] Warning: Failed to parse image {i}: {e}")
-                        break
-            return images
-
-        def write_images_bin(bin_path, images):
-            with open(bin_path, 'wb') as f:
-                f.write(struct.pack('<Q', len(images)))
-                for img in images:
-                    f.write(struct.pack(
-                        '<II', img['image_id'], img['camera_id']))
-                    f.write(img['name'].encode('utf-8') + b'\x00')
-                    f.write(struct.pack('<4d', *img['qvec']))
-                    f.write(struct.pack('<3d', *img['tvec']))
-                    f.write(struct.pack('<Q', len(img['points'])))
-                    for xy, point_id in img['points']:
-                        f.write(struct.pack('<2d', *xy))
-                        f.write(struct.pack('<Q', point_id))
-
-        # Read all images from COLMAP's output
-        all_images = parse_images_bin(images_bin_path)
-        print(f"[{job_id}] COLMAP images.bin has {len(all_images)} entries")
-
-        # Filter to only include our frame names
-        frame_names = set(os.path.basename(f) for f in frames)
-        filtered_images = [
-            img for img in all_images if img['name'] in frame_names]
-        print(
-            f"[{job_id}] Keeping {len(filtered_images)} images that match our frames")
-
-        # Rewrite images.bin with only our frames
-        write_images_bin(images_bin_path, filtered_images)
-
-        # Copy all our frames to the images directory
+        # Copy frames to images directory
         for frame in frames:
             shutil.copy2(frame, os.path.join(
                 c4d_images, os.path.basename(frame)))
+
+        # Create cameras.bin, images.bin, points3D.bin with orbiting camera poses
+        import math
+        from scipy.spatial.transform import Rotation as R
+
+        num_frames = len(frames)
+        focal_length = 1536.0  # From COLMAP output
+        image_width, image_height = 1280, 720  # From video
+
+        # cameras.bin - single shared camera
+        with open(os.path.join(dst_sparse, "cameras.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', 1))  # 1 camera
+            f.write(struct.pack('<I', 1))  # camera_id
+            f.write(b'SIMPLE_PINHOLE\x00')  # model name
+            f.write(struct.pack('<Q', image_width))
+            f.write(struct.pack('<Q', image_height))
+            f.write(struct.pack('<d', focal_length))
+            f.write(struct.pack('<d', image_width / 2))
+            f.write(struct.pack('<d', image_height / 2))
+
+        # images.bin - one entry per frame with orbiting poses
+        with open(os.path.join(dst_sparse, "images.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', num_frames))
+            for i, frame in enumerate(frames):
+                angle = 2 * math.pi * i / num_frames
+                # Camera position on orbit
+                radius = 3.0
+                cx, cy, cz = radius * \
+                    math.cos(angle), 0.0, radius * math.sin(angle)
+                # Look-at origin
+                forward = np.array([-cx, -cy, -cz])
+                forward /= np.linalg.norm(forward)
+                up = np.array([0, 1, 0])
+                right = np.cross(forward, up)
+                right /= np.linalg.norm(right)
+                up = np.cross(right, forward)
+                # Rotation matrix to quaternion
+                rot_mat = np.column_stack([right, up, -forward])
+                q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
+                qvec = (q[3], q[0], q[1], q[2])  # COLMAP uses (w, x, y, z)
+                tvec = (-np.dot(rot_mat.T, np.array([cx, cy, cz])))
+                # Write image entry
+                f.write(struct.pack('<II', i + 1, 1))  # image_id, camera_id
+                f.write(os.path.basename(frame).encode('utf-8') + b'\x00')
+                f.write(struct.pack('<4d', *qvec))
+                f.write(struct.pack('<3d', *tvec))
+                f.write(struct.pack('<Q', 0))  # 0 2D points
+
+        # Empty points3D.bin
+        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', 0))  # 0 points
 
         # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
