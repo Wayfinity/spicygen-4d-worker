@@ -240,17 +240,35 @@ def handler(job):
                 src) else shutil.copytree(src, dst)
 
         # Copy only the frames that COLMAP successfully reconstructed
-        # Read image names directly from COLMAP's images.bin
-        import sys
-        sys.path.insert(0, "/usr/local/lib/python3.10/dist-packages")
-        try:
-            from colmap import read_write_model
-            cam_extrinsics = read_write_model.read_images_binary(
-                os.path.join(dst_sparse, "images.bin"))
-            colmap_image_names = set(
-                img.name for img in cam_extrinsics.values())
-        except Exception as e:
-            print(f"[{job_id}] Warning: Could not read images.bin: {e}")
+        # Parse images.bin directly to get reconstructed image names
+        def parse_colmap_images_bin(bin_path):
+            """Parse COLMAP images.bin to extract image names."""
+            image_names = set()
+            try:
+                with open(bin_path, 'rb') as f:
+                    num_images = struct.unpack('<Q', f.read(8))[0]
+                    for _ in range(num_images):
+                        f.read(8)  # image_id, camera_id
+                        name = b''
+                        while True:
+                            ch = f.read(1)
+                            if ch == b'\x00' or not ch:
+                                break
+                            name += ch
+                        image_names.add(name.decode('utf-8'))
+                        f.read(7 * 8)  # qvec, tvec
+                        num_points = struct.unpack('<Q', f.read(8))[0]
+                        f.read(num_points * (2 * 8 + 8))  # point2D data
+            except Exception as e:
+                print(f"[{job_id}] Warning: Failed to parse images.bin: {e}")
+            return image_names
+
+        images_bin_path = os.path.join(dst_sparse, "images.bin")
+        colmap_image_names = parse_colmap_images_bin(images_bin_path)
+
+        if not colmap_image_names:
+            print(
+                f"[{job_id}] Warning: No images found in images.bin, using all frames")
             colmap_image_names = set(os.path.basename(f) for f in frames)
 
         print(f"[{job_id}] COLMAP reconstructed {len(colmap_image_names)} images")
