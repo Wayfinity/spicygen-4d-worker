@@ -248,31 +248,41 @@ def handler(job):
             images = []
             with open(bin_path, 'rb') as f:
                 num_images = struct.unpack('<Q', f.read(8))[0]
-                for _ in range(num_images):
-                    image_id, camera_id = struct.unpack('<II', f.read(8))
-                    name = b''
-                    while True:
-                        ch = f.read(1)
-                        if ch == b'\x00' or not ch:
-                            break
-                        name += ch
-                    name = name.decode('utf-8')
-                    qvec = struct.unpack('<4d', f.read(32))
-                    tvec = struct.unpack('<3d', f.read(24))
-                    num_points = struct.unpack('<Q', f.read(8))[0]
-                    points = []
-                    for _ in range(num_points):
-                        xy = struct.unpack('<2d', f.read(16))
-                        point_id = struct.unpack('<Q', f.read(8))[0]
-                        points.append((xy, point_id))
-                    images.append({
-                        'image_id': image_id,
-                        'camera_id': camera_id,
-                        'name': name,
-                        'qvec': qvec,
-                        'tvec': tvec,
-                        'points': points
-                    })
+                print(f"[{job_id}] Parsing {num_images} images from bin")
+                for i in range(num_images):
+                    try:
+                        image_id, camera_id = struct.unpack('<II', f.read(8))
+                        name = b''
+                        while True:
+                            ch = f.read(1)
+                            if ch == b'\x00' or not ch:
+                                break
+                            name += ch
+                        # Try UTF-8, fall back to latin-1
+                        try:
+                            name = name.decode('utf-8')
+                        except UnicodeDecodeError:
+                            name = name.decode('latin-1')
+                        qvec = struct.unpack('<4d', f.read(32))
+                        tvec = struct.unpack('<3d', f.read(24))
+                        num_points = struct.unpack('<Q', f.read(8))[0]
+                        points = []
+                        for _ in range(num_points):
+                            xy = struct.unpack('<2d', f.read(16))
+                            point_id = struct.unpack('<Q', f.read(8))[0]
+                            points.append((xy, point_id))
+                        images.append({
+                            'image_id': image_id,
+                            'camera_id': camera_id,
+                            'name': name,
+                            'qvec': qvec,
+                            'tvec': tvec,
+                            'points': points
+                        })
+                    except Exception as e:
+                        print(
+                            f"[{job_id}] Warning: Failed to parse image {i}: {e}")
+                        break
             return images
 
         def write_images_bin(bin_path, images):
