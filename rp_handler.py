@@ -261,15 +261,37 @@ def handler(job):
             camera_poses.append(
                 (i + 1, 1, os.path.basename(frame), qvec, tuple(tvec)))
 
-        # Write cameras.txt
-        # 4C4D requires PINHOLE model (not SIMPLE_PINHOLE) with 4 params: fx, fy, cx, cy
+        # Write cameras.bin (binary) - 4C4D tries this first
+        # Format: num_cameras (Q), then for each: camera_id (i), model_id (i), width (Q), height (Q), params (4 doubles for PINHOLE)
+        with open(os.path.join(dst_sparse, "cameras.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', 1))  # 1 camera
+            f.write(struct.pack('<i', 1))  # camera_id
+            f.write(struct.pack('<i', 1))  # model_id=1 (PINHOLE)
+            f.write(struct.pack('<Q', image_width))
+            f.write(struct.pack('<Q', image_height))
+            f.write(struct.pack('<4d', focal_length,
+                    focal_length, image_width/2, image_height/2))
+
+        # Write cameras.txt (text fallback)
         with open(os.path.join(dst_sparse, "cameras.txt"), 'w') as f:
             f.write("# Camera list with one line of data per camera:\n")
             f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
             f.write(
                 f"1 PINHOLE {image_width} {image_height} {focal_length} {focal_length} {image_width/2} {image_height/2}\n")
 
-        # Write images.txt
+        # Write images.bin (binary) - 4C4D tries this first
+        # Format: num_images (Q), then for each: image_id (i), qvec (4d), tvec (3d), camera_id (i), name (null-terminated), num_points2D (Q), points2D data
+        with open(os.path.join(dst_sparse, "images.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', num_frames))
+            for img_id, cam_id, name, qvec, tvec in camera_poses:
+                f.write(struct.pack('<i', img_id))
+                f.write(struct.pack('<4d', *qvec))
+                f.write(struct.pack('<3d', *tvec))
+                f.write(struct.pack('<i', cam_id))
+                f.write(name.encode('utf-8') + b'\x00')
+                f.write(struct.pack('<Q', 0))  # 0 points2D
+
+        # Write images.txt (text fallback)
         with open(os.path.join(dst_sparse, "images.txt"), 'w') as f:
             f.write("# Image list with two lines of data per image:\n")
             f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
@@ -279,7 +301,11 @@ def handler(job):
                     f"{img_id} {' '.join(str(v) for v in qvec)} {' '.join(str(v) for v in tvec)} {cam_id} {name}\n")
                 f.write("\n")
 
-        # Write empty points3D.txt
+        # Write empty points3D.bin (binary)
+        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', 0))  # 0 points
+
+        # Write empty points3D.txt (text fallback)
         with open(os.path.join(dst_sparse, "points3D.txt"), 'w') as f:
             f.write("# 3D point list with one line of data per point:\n")
             f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
