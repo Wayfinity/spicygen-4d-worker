@@ -239,47 +239,74 @@ def handler(job):
             shutil.copy2(src, dst) if os.path.isfile(
                 src) else shutil.copytree(src, dst)
 
-        # Copy only the frames that COLMAP successfully reconstructed
-        # Parse images.bin directly to get reconstructed image names
-        def parse_colmap_images_bin(bin_path):
-            """Parse COLMAP images.bin to extract image names."""
-            image_names = set()
-            try:
-                with open(bin_path, 'rb') as f:
-                    num_images = struct.unpack('<Q', f.read(8))[0]
-                    for _ in range(num_images):
-                        f.read(8)  # image_id, camera_id
-                        name = b''
-                        while True:
-                            ch = f.read(1)
-                            if ch == b'\x00' or not ch:
-                                break
-                            name += ch
-                        image_names.add(name.decode('utf-8'))
-                        f.read(7 * 8)  # qvec, tvec
-                        num_points = struct.unpack('<Q', f.read(8))[0]
-                        f.read(num_points * (2 * 8 + 8))  # point2D data
-            except Exception as e:
-                print(f"[{job_id}] Warning: Failed to parse images.bin: {e}")
-            return image_names
-
+        # Filter images.bin to only include our 24 frames
+        # This ensures the camera count matches the image count
         images_bin_path = os.path.join(dst_sparse, "images.bin")
-        colmap_image_names = parse_colmap_images_bin(images_bin_path)
 
-        if not colmap_image_names:
-            print(
-                f"[{job_id}] Warning: No images found in images.bin, using all frames")
-            colmap_image_names = set(os.path.basename(f) for f in frames)
+        # Parse images.bin to get all entries
+        def parse_images_bin(bin_path):
+            images = []
+            with open(bin_path, 'rb') as f:
+                num_images = struct.unpack('<Q', f.read(8))[0]
+                for _ in range(num_images):
+                    image_id, camera_id = struct.unpack('<II', f.read(8))
+                    name = b''
+                    while True:
+                        ch = f.read(1)
+                        if ch == b'\x00' or not ch:
+                            break
+                        name += ch
+                    name = name.decode('utf-8')
+                    qvec = struct.unpack('<4d', f.read(32))
+                    tvec = struct.unpack('<3d', f.read(24))
+                    num_points = struct.unpack('<Q', f.read(8))[0]
+                    points = []
+                    for _ in range(num_points):
+                        xy = struct.unpack('<2d', f.read(16))
+                        point_id = struct.unpack('<Q', f.read(8))[0]
+                        points.append((xy, point_id))
+                    images.append({
+                        'image_id': image_id,
+                        'camera_id': camera_id,
+                        'name': name,
+                        'qvec': qvec,
+                        'tvec': tvec,
+                        'points': points
+                    })
+            return images
 
-        print(f"[{job_id}] COLMAP reconstructed {len(colmap_image_names)} images")
+        def write_images_bin(bin_path, images):
+            with open(bin_path, 'wb') as f:
+                f.write(struct.pack('<Q', len(images)))
+                for img in images:
+                    f.write(struct.pack(
+                        '<II', img['image_id'], img['camera_id']))
+                    f.write(img['name'].encode('utf-8') + b'\x00')
+                    f.write(struct.pack('<4d', *img['qvec']))
+                    f.write(struct.pack('<3d', *img['tvec']))
+                    f.write(struct.pack('<Q', len(img['points'])))
+                    for xy, point_id in img['points']:
+                        f.write(struct.pack('<2d', *xy))
+                        f.write(struct.pack('<Q', point_id))
 
+        # Read all images from COLMAP's output
+        all_images = parse_images_bin(images_bin_path)
+        print(f"[{job_id}] COLMAP images.bin has {len(all_images)} entries")
+
+        # Filter to only include our frame names
+        frame_names = set(os.path.basename(f) for f in frames)
+        filtered_images = [
+            img for img in all_images if img['name'] in frame_names]
+        print(
+            f"[{job_id}] Keeping {len(filtered_images)} images that match our frames")
+
+        # Rewrite images.bin with only our frames
+        write_images_bin(images_bin_path, filtered_images)
+
+        # Copy all our frames to the images directory
         for frame in frames:
-            frame_name = os.path.basename(frame)
-            if frame_name in colmap_image_names:
-                shutil.copy2(frame, os.path.join(c4d_images, frame_name))
-            else:
-                print(
-                    f"[{job_id}] Skipping {frame_name} (not in COLMAP reconstruction)")
+            shutil.copy2(frame, os.path.join(
+                c4d_images, os.path.basename(frame)))
 
         # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
