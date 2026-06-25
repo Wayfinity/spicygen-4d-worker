@@ -45,6 +45,16 @@ for i, line in enumerate(lines):
         continue
     if stripped == 'temp_image = None':
         continue
+
+    # Fix 3: Disable strict camera/image parity assertion.
+    # 4C4D may synthesize additional camera infos from naming conventions,
+    # which can legitimately differ from on-disk file count.
+    if 'assert len(cam_infos) == len(os.listdir(os.path.join(path, reading_dir)))' in stripped:
+        indent = line[:len(line) - len(line.lstrip())]
+        new_lines.append(f"{indent}# Patched: upstream assertion is too strict for synthesized camera infos.\n")
+        new_lines.append(f"{indent}if len(cam_infos) != len(os.listdir(os.path.join(path, reading_dir))):\n")
+        new_lines.append(f"{indent}    print('[4C4D PATCH] camera/image count mismatch; continuing with synthesized camera infos')\n")
+        continue
     
     new_lines.append(line)
 

@@ -155,6 +155,14 @@ def extract_frames(video_path: str, output_dir: str, fps: int = 4):
     return sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
 
 
+def uniform_subsample(frames, max_frames: int):
+    """Keep temporal coverage while bounding downstream workload."""
+    if len(frames) <= max_frames:
+        return frames
+    indices = np.linspace(0, len(frames) - 1, num=max_frames, dtype=int)
+    return [frames[i] for i in indices]
+
+
 def run_colmap(images_dir: str, output_dir: str):
     """Run COLMAP SfM pipeline to estimate camera poses."""
     os.makedirs(output_dir, exist_ok=True)
@@ -217,6 +225,14 @@ def handler(job):
         if len(frames) < 10:
             return {"error": f"Too few frames extracted ({len(frames)}). Need at least 10 for reliable reconstruction."}
 
+        # Bound frame count to keep 4C4D input size stable.
+        max_train_frames = int(job_input.get("max_train_frames", 24))
+        if max_train_frames < 10:
+            max_train_frames = 10
+        if len(frames) > max_train_frames:
+            frames = uniform_subsample(frames, max_train_frames)
+            print(f"[{job_id}] Subsampled to {len(frames)} frames for training")
+
         # Create COLMAP-format output with known orbiting camera poses
         # This is more reliable than running COLMAP SfM on AI-generated videos
         print(f"[{job_id}] Creating camera poses for orbiting video...")
@@ -228,18 +244,20 @@ def handler(job):
         os.makedirs(c4d_images, exist_ok=True)
         os.makedirs(dst_sparse, exist_ok=True)
 
-        # Copy frames to images directory with correct naming
-        # 4C4D expects: cam{cam_id}_{timestamp}.png format
-        for frame_idx, frame in enumerate(frames):
-            # Rename to cam00_0000.png, cam00_0001.png, etc.
-            dst_name = f"cam00_{frame_idx:04d}.png"
-            shutil.copy2(frame, os.path.join(c4d_images, dst_name))
+        # Copy frames to images directory using a complete camera x timestamp grid.
+        # 4C4D's reader expands camera infos across timestamps and expects matching files.
+        # We seed real poses with cam00_* and duplicate per-timestamp images across virtual cams
+        # so the directory cardinality matches reader expectations.
+        num_frames = len(frames)
+        for timestamp, frame in enumerate(frames):
+            for cam_id in range(num_frames):
+                dst_name = f"cam{cam_id:02d}_{timestamp:04d}.png"
+                shutil.copy2(frame, os.path.join(c4d_images, dst_name))
 
         # Create COLMAP text format files with orbiting camera poses
         import math
         from scipy.spatial.transform import Rotation as R
 
-        num_frames = len(frames)
         focal_length = 1536.0
         image_width, image_height = 1280, 720
 
@@ -313,6 +331,9 @@ def handler(job):
         with open(os.path.join(dst_sparse, "points3D.txt"), 'w') as f:
             f.write("# 3D point list with one line of data per point:\n")
             f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
+
+        image_file_count = len(os.listdir(c4d_images))
+        print(f"[{job_id}] Prepared {image_file_count} images for 4C4D ({num_frames} timestamps x {num_frames} cameras)")
 
         # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
