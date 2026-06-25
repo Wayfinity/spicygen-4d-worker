@@ -262,6 +262,8 @@ def handler(job):
         image_width, image_height = 1280, 720
 
         # Generate orbiting camera poses
+        # COLMAP file should list one entry per camera with timestamp 0000
+        # process_camera_info will expand to all timestamps
         camera_poses = []
         for i, frame in enumerate(frames):
             angle = 2 * math.pi * i / num_frames
@@ -278,9 +280,8 @@ def handler(job):
             q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
             qvec = (q[3], q[0], q[1], q[2])  # COLMAP: (w, x, y, z)
             tvec = -rot_mat.T @ np.array([cx, cy, cz])
-            # Use the renamed filename: cam00_0000.png, cam00_0001.png, etc.
-            # COLMAP stores names WITHOUT the .png extension
-            renamed = f"cam00_{i:04d}"
+            # Use cam{frame_idx}_0000.png - one per camera, timestamp 0000
+            renamed = f"cam{i:02d}_0000.png"
             camera_poses.append(
                 (i + 1, 1, renamed, qvec, tuple(tvec)))
 
