@@ -1,10 +1,8 @@
 import os
 import shutil
 import subprocess
-import struct
 import urllib.request
 import glob
-import sqlite3
 import runpod
 import boto3
 import numpy as np
@@ -16,188 +14,129 @@ WORKSPACE = "/workspace"
 INPUT_DIR = os.path.join(WORKSPACE, "inputs")
 OUTPUT_DIR = os.path.join(WORKSPACE, "outputs")
 
+
 def run_cmd(cmd, cwd=None):
-    print(f"[cmd] {' '.join(cmd)}")
-    completed = subprocess.run(
+    """Run a shell command and return the result."""
+    print(f"[CMD] {' '.join(cmd)}")
+    result = subprocess.run(
         cmd,
         cwd=cwd,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        capture_output=True,
         text=True,
     )
-    if completed.stdout:
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    if completed.returncode != 0:
-        raise subprocess.CalledProcessError(completed.returncode, cmd, output=completed.stdout)
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, result.stdout, result.stderr
+        )
+    return result
 
 
-def build_4c4d_config(config_path: str, source_path: str, model_path: str, iterations: int = 1500):
-    # 4C4D now expects a YAML config passed via --config.
-    config_content = f"""
-gaussian_dim: 4
-time_duration: [0.0, 10.0]
-num_pts: 200000
-num_pts_ratio: 1.0
-rot_4d: true
-force_sh_3d: false
-batch_size: 1
-exhaust_test: false
+def extract_frames(video_path, output_dir, fps=4):
+    """Extract frames from video at specified FPS."""
+    os.makedirs(output_dir, exist_ok=True)
+    frame_pattern = os.path.join(output_dir, "frame_%04d.png")
 
-ModelParams:
-  sh_degree: 3
-  source_path: "{source_path}"
-  model_path: "{model_path}"
-  images: "images"
-  resolution: 1
-  white_background: false
-  data_device: "cuda"
-  eval: false
-  extension: ".png"
-  num_extra_pts: 0
-  loaded_pth: ""
-  frame_ratio: 1
-  dataloader: false
+    run_cmd([
+        "ffmpeg", "-i", video_path,
+        "-vf", f"fps={fps}",
+        "-q:v", "2",
+        frame_pattern
+    ])
 
-PipelineParams:
-  convert_SHs_python: false
-  compute_cov3D_python: false
-  debug: false
-  env_map_res: 0
-  env_optimize_until: 1000000000
-  env_optimize_from: 0
-  eval_shfs_4d: true
-
-OptimizationParams:
-  iterations: {iterations}
-""".strip()
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(config_content)
+    frames = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
+    return frames
 
 
-def find_latest_4c4d_ply(model_path: str):
-    pattern = os.path.join(model_path, "point_cloud", "iteration_*", "point_cloud.ply")
-    candidates = glob.glob(pattern)
-    if not candidates:
-        raise FileNotFoundError(f"No 4C4D PLY found using pattern: {pattern}")
+def convert_ply_to_splat(ply_path, splat_path):
+    """Convert a .ply file to .splat format."""
+    print(f"Converting {ply_path} to {splat_path}")
 
-    def iteration_key(path):
-        folder = os.path.basename(os.path.dirname(path))
-        try:
-            return int(folder.split("_")[-1])
-        except ValueError:
-            return -1
+    plydata = PlyData.read(ply_path)
+    vertex = plydata['vertex']
 
-    return max(candidates, key=iteration_key)
+    num_points = len(vertex.data)
+    print(f"Processing {num_points} points")
+    
+    with open(splat_path, 'wb') as f:
+        for i in range(num_points):
+            v = vertex.data[i]
+
+            # Position (x, y, z)
+            x, y, z = v['x'], v['y'], v['z']
+            f.write(np.array([x, y, z], dtype=np.float32).tobytes())
+
+            # Scale (scale_0, scale_1, scale_2) - already in log space
+            if 'scale_0' in vertex.dtype.names:
+                s0, s1, s2 = v['scale_0'], v['scale_1'], v['scale_2']
+                f.write(np.array([s0, s1, s2], dtype=np.float32).tobytes())
+            else:
+                # Default scale if not present
+                f.write(np.array([-10.0, -10.0, -10.0],
+                        dtype=np.float32).tobytes())
+
+            # Color (r, g, b) - convert from SH coefficients if needed
+            if 'f_dc_0' in vertex.dtype.names:
+                # Convert from SH to RGB (simplified)
+                r = max(0, min(255, int((v['f_dc_0'] * 0.282 + 0.5) * 255)))
+                g = max(0, min(255, int((v['f_dc_1'] * 0.282 + 0.5) * 255)))
+                b = max(0, min(255, int((v['f_dc_2'] * 0.282 + 0.5) * 255)))
+            elif 'red' in vertex.dtype.names:
+                r, g, b = v['red'], v['green'], v['blue']
+            else:
+                r, g, b = 128, 128, 128
+
+            # Opacity
+            if 'opacity' in vertex.dtype.names:
+                opacity = max(0, min(255, int(v['opacity'] * 255)))
+            else:
+                opacity = 255
+
+            f.write(bytes([r, g, b, opacity]))
+
+            # Rotation quaternion (rot_0, rot_1, rot_2, rot_3)
+            if 'rot_0' in vertex.dtype.names:
+                q0, q1, q2, q3 = v['rot_0'], v['rot_1'], v['rot_2'], v['rot_3']
+                # Normalize
+                norm = np.sqrt(q0**2 + q1**2 + q2**2 + q3**2)
+                if norm > 0:
+                    q0, q1, q2, q3 = q0/norm, q1/norm, q2/norm, q3/norm
+                # Convert to byte format (128 = identity)
+                f.write(bytes([
+                    int((q0 + 1.0) * 127.5),
+                    int((q1 + 1.0) * 127.5),
+                    int((q2 + 1.0) * 127.5),
+                    int((q3 + 1.0) * 127.5)
+                ]))
+            else:
+                # Identity quaternion
+                f.write(bytes([128, 128, 128, 128]))
+
+    print(f"Written {splat_path}")
+
+
+def find_latest_ply(model_path):
+    """Find the latest .ply file in the model directory."""
+    ply_files = glob.glob(os.path.join(
+        model_path, "point_cloud", "iteration_*", "point_cloud.ply"))
+    if not ply_files:
+        raise RuntimeError("No .ply files found in model directory")
+    return max(ply_files, key=os.path.getmtime)
 
 
 def cleanup_workspace():
-    for path in [INPUT_DIR, OUTPUT_DIR]:
-        if os.path.exists(path):
-            shutil.rmtree(path)
-        os.makedirs(path, exist_ok=True)
-
-def convert_ply_to_splat(ply_input_path: str, splat_output_path: str):
-    if not os.path.exists(ply_input_path):
-        raise FileNotFoundError(f"Source PLY file not found at {ply_input_path}")
-        
-    plydata = PlyData.read(ply_input_path)
-    vertex = plydata['vertex']
-
-    x = np.asarray(vertex['x'], dtype=np.float32)
-    y = np.asarray(vertex['y'], dtype=np.float32)
-    z = np.asarray(vertex['z'], dtype=np.float32)
-    
-    scale_0 = np.asarray(vertex['scale_0'], dtype=np.float32)
-    scale_1 = np.asarray(vertex['scale_1'], dtype=np.float32)
-    scale_2 = np.asarray(vertex['scale_2'], dtype=np.float32)
-
-    r = np.asarray(vertex['f_dc_0'], dtype=np.float32) if 'f_dc_0' in vertex else np.asarray(vertex['red'], dtype=np.float32)
-    g = np.asarray(vertex['f_dc_1'], dtype=np.float32) if 'f_dc_1' in vertex else np.asarray(vertex['green'], dtype=np.float32)
-    b = np.asarray(vertex['f_dc_2'], dtype=np.float32) if 'f_dc_2' in vertex else np.asarray(vertex['blue'], dtype=np.float32)
-    
-    opacity = np.asarray(vertex['opacity'], dtype=np.float32)
-    
-    rot_0 = np.asarray(vertex['rot_0'], dtype=np.float32)
-    rot_1 = np.asarray(vertex['rot_1'], dtype=np.float32)
-    rot_2 = np.asarray(vertex['rot_2'], dtype=np.float32)
-    rot_3 = np.asarray(vertex['rot_3'], dtype=np.float32)
-    
-    num_primitives = len(x)
-
-    with open(splat_output_path, 'wb') as f:
-        for i in range(num_primitives):
-            res_r = int(np.clip(r[i] * 255, 0, 255))
-            res_g = int(np.clip(g[i] * 255, 0, 255))
-            res_b = int(np.clip(b[i] * 255, 0, 255))
-            res_a = int(np.clip(1.0 / (1.0 + np.exp(-opacity[i])) * 255, 0, 255)) 
-
-            f.write(struct.pack('fff', x[i], y[i], z[i]))
-            f.write(struct.pack('fff', np.exp(scale_0[i]), np.exp(scale_1[i]), np.exp(scale_2[i])))
-            f.write(struct.pack('BBBB', res_r, res_g, res_b, res_a))
-
-            q = np.array([rot_0[i], rot_1[i], rot_2[i], rot_3[i]])
-            norm = np.linalg.norm(q)
-            if norm > 0:
-                q = q / norm
-            f.write(struct.pack('BBBB', int((q[0]+1)*127.5), int((q[1]+1)*127.5), int((q[2]+1)*127.5), int((q[3]+1)*127.5)))
-
-
-def extract_frames(video_path: str, output_dir: str, fps: int = 4):
-    """Extract frames from video at specified FPS."""
-    os.makedirs(output_dir, exist_ok=True)
-    run_cmd([
-        "ffmpeg", "-y", "-i", video_path,
-        "-vf", f"fps={fps}",
-        os.path.join(output_dir, "frame_%04d.png"),
-    ])
-    return sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
-
-
-def uniform_subsample(frames, max_frames: int):
-    """Keep temporal coverage while bounding downstream workload."""
-    if len(frames) <= max_frames:
-        return frames
-    indices = np.linspace(0, len(frames) - 1, num=max_frames, dtype=int)
-    return [frames[i] for i in indices]
-
-
-def run_colmap(images_dir: str, output_dir: str):
-    """Run COLMAP SfM pipeline to estimate camera poses."""
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Feature extraction
-    run_cmd([
-        "colmap", "feature_extractor",
-        "--database_path", os.path.join(output_dir, "database.db"),
-        "--image_path", images_dir,
-        "--ImageReader.single_camera", "1",
-        "--ImageReader.camera_model", "PINHOLE",
-        "--SiftExtraction.use_gpu", "1",
-    ])
-
-    # Feature matching
-    run_cmd([
-        "colmap", "exhaustive_matcher",
-        "--database_path", os.path.join(output_dir, "database.db"),
-        "--SiftMatching.use_gpu", "1",
-    ])
-
-    # Reconstruction
-    sparse_dir = os.path.join(output_dir, "sparse", "0")
-    os.makedirs(sparse_dir, exist_ok=True)
-    run_cmd([
-        "colmap", "mapper",
-        "--database_path", os.path.join(output_dir, "database.db"),
-        "--image_path", images_dir,
-        "--output_path", os.path.join(output_dir, "sparse"),
-    ])
-
-    return sparse_dir
+    """Clean up the workspace directories."""
+    for dir_path in [INPUT_DIR, OUTPUT_DIR]:
+        if os.path.exists(dir_path):
+            shutil.rmtree(dir_path)
+        os.makedirs(dir_path, exist_ok=True)
 
 
 def handler(job):
+    """Main handler function for processing video to 3D Gaussian Splat."""
     job_input = job.get("input", {})
 
     video_url = job_input.get("video_url")
@@ -210,7 +149,7 @@ def handler(job):
     cleanup_workspace()
 
     video_path = os.path.join(INPUT_DIR, "input_video.mp4")
-    splat_output = os.path.join(OUTPUT_DIR, "scene_model_4d.splat")
+    splat_output = os.path.join(OUTPUT_DIR, "scene_model_3d.splat")
 
     try:
         print(f"[{job_id}] Downloading source video...")
@@ -225,214 +164,104 @@ def handler(job):
         if len(frames) < 10:
             return {"error": f"Too few frames extracted ({len(frames)}). Need at least 10 for reliable reconstruction."}
 
-        # Bound frame count to keep 4C4D input size stable.
-        max_train_frames = int(job_input.get("max_train_frames", 24))
-        if max_train_frames < 10:
-            max_train_frames = 10
-        if len(frames) > max_train_frames:
-            frames = uniform_subsample(frames, max_train_frames)
-            print(f"[{job_id}] Subsampled to {len(frames)} frames for training")
+        # Run COLMAP for camera pose estimation
+        print(f"[{job_id}] Running COLMAP SfM...")
+        colmap_dir = os.path.join(OUTPUT_DIR, "colmap")
+        os.makedirs(colmap_dir, exist_ok=True)
 
-        # Create COLMAP-format output with known orbiting camera poses
-        # This is more reliable than running COLMAP SfM on AI-generated videos
-        print(f"[{job_id}] Creating camera poses for orbiting video...")
+        db_path = os.path.join(colmap_dir, "database.db")
+        sparse_dir = os.path.join(colmap_dir, "sparse")
+        os.makedirs(sparse_dir, exist_ok=True)
 
-        # Prepare 4C4D input structure
-        c4d_source = os.path.join(OUTPUT_DIR, "4c4d_source")
-        c4d_images = os.path.join(c4d_source, "images")
-        dst_sparse = os.path.join(c4d_source, "sparse", "0")
-        os.makedirs(c4d_images, exist_ok=True)
-        os.makedirs(dst_sparse, exist_ok=True)
+        # Feature extraction
+        run_cmd([
+            "colmap", "feature_extractor",
+            "--database_path", db_path,
+            "--image_path", frames_dir,
+            "--ImageReader.single_camera", "1",
+            "--ImageReader.camera_model", "PINHOLE",
+            "--SiftExtraction.use_gpu", "1",
+        ])
 
-        # Copy frames to images directory using a complete camera x timestamp grid.
-        # 4C4D's reader expands camera infos across timestamps and expects matching files.
-        # We seed real poses with cam00_* and duplicate per-timestamp images across virtual cams
-        # so the directory cardinality matches reader expectations.
-        num_frames = len(frames)
-        for timestamp, frame in enumerate(frames):
-            for cam_id in range(num_frames):
-                dst_name = f"cam{cam_id:02d}_{timestamp:04d}.png"
-                shutil.copy2(frame, os.path.join(c4d_images, dst_name))
+        # Feature matching
+        run_cmd([
+            "colmap", "exhaustive_matcher",
+            "--database_path", db_path,
+            "--SiftMatching.use_gpu", "1",
+        ])
 
-        # Create COLMAP text format files with orbiting camera poses
-        import math
-        from scipy.spatial.transform import Rotation as R
+        # 3D reconstruction
+        run_cmd([
+            "colmap", "mapper",
+            "--database_path", db_path,
+            "--image_path", frames_dir,
+            "--output_path", sparse_dir,
+        ])
 
-        focal_length = 1536.0
-        image_width, image_height = 1280, 720
+        # Check if COLMAP succeeded
+        colmap_sparse_dir = os.path.join(sparse_dir, "0")
+        if not os.path.exists(os.path.join(colmap_sparse_dir, "images.bin")):
+            return {"error": "COLMAP failed to reconstruct the scene. The video may not have enough visual features or camera motion."}
 
-        # Generate orbiting camera poses
-        # COLMAP file should list one entry per camera with timestamp 0000
-        # process_camera_info will expand to all timestamps
-        camera_poses = []
-        for i, frame in enumerate(frames):
-            angle = 2 * math.pi * i / num_frames
-            radius = 3.0
-            cx, cy, cz = radius * \
-                math.cos(angle), 0.0, radius * math.sin(angle)
-            forward = np.array([-cx, -cy, -cz])
-            forward /= np.linalg.norm(forward)
-            up = np.array([0, 1, 0])
-            right = np.cross(forward, up)
-            right /= np.linalg.norm(right)
-            up = np.cross(right, forward)
-            rot_mat = np.column_stack([right, up, -forward])
-            q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
-            qvec = (q[3], q[0], q[1], q[2])  # COLMAP: (w, x, y, z)
-            tvec = -rot_mat.T @ np.array([cx, cy, cz])
-            # Use cam{frame_idx}_0000.png - one per camera, timestamp 0000
-            renamed = f"cam{i:02d}_0000.png"
-            camera_poses.append(
-                (i + 1, 1, renamed, qvec, tuple(tvec)))
+        # Prepare 3DGS input structure (standard COLMAP format)
+        print(f"[{job_id}] Preparing 3DGS input...")
+        gs_source = os.path.join(OUTPUT_DIR, "gaussian_splatting_source")
+        gs_images = os.path.join(gs_source, "images")
+        gs_sparse = os.path.join(gs_source, "sparse")
+        os.makedirs(gs_images, exist_ok=True)
+        os.makedirs(gs_sparse, exist_ok=True)
 
-        # Write cameras.bin (binary) - 4C4D tries this first
-        # Format: num_cameras (Q), then for each: camera_id (i), model_id (i), width (Q), height (Q), params (4 doubles for PINHOLE)
-        with open(os.path.join(dst_sparse, "cameras.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', 1))  # 1 camera
-            f.write(struct.pack('<i', 1))  # camera_id
-            f.write(struct.pack('<i', 1))  # model_id=1 (PINHOLE)
-            f.write(struct.pack('<Q', image_width))
-            f.write(struct.pack('<Q', image_height))
-            f.write(struct.pack('<4d', focal_length,
-                    focal_length, image_width/2, image_height/2))
+        # Copy images
+        for frame in frames:
+            shutil.copy2(frame, os.path.join(
+                gs_images, os.path.basename(frame)))
 
-        # Write cameras.txt (text fallback)
-        with open(os.path.join(dst_sparse, "cameras.txt"), 'w') as f:
-            f.write("# Camera list with one line of data per camera:\n")
-            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
-            f.write(
-                f"1 PINHOLE {image_width} {image_height} {focal_length} {focal_length} {image_width/2} {image_height/2}\n")
+        # Copy COLMAP sparse files
+        shutil.copytree(colmap_sparse_dir, os.path.join(
+            gs_sparse, "0"), dirs_exist_ok=True)
 
-        # Write images.bin (binary) - 4C4D tries this first
-        # Format: num_images (Q), then for each: image_id (i), qvec (4d), tvec (3d), camera_id (i), name (null-terminated), num_points2D (Q), points2D data
-        with open(os.path.join(dst_sparse, "images.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', num_frames))
-            for img_id, cam_id, name, qvec, tvec in camera_poses:
-                f.write(struct.pack('<i', img_id))
-                f.write(struct.pack('<4d', *qvec))
-                f.write(struct.pack('<3d', *tvec))
-                f.write(struct.pack('<i', cam_id))
-                f.write(name.encode('utf-8') + b'\x00')
-                f.write(struct.pack('<Q', 0))  # 0 points2D
+        # Convert COLMAP .bin to .txt for 3DGS compatibility
+        run_cmd([
+            "colmap", "model_converter",
+            "--input_path", os.path.join(gs_sparse, "0"),
+            "--output_path", os.path.join(gs_sparse, "0"),
+            "--output_type", "TXT",
+        ])
 
-        # Write images.txt (text fallback)
-        with open(os.path.join(dst_sparse, "images.txt"), 'w') as f:
-            f.write("# Image list with two lines of data per image:\n")
-            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
-            f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
-            for img_id, cam_id, name, qvec, tvec in camera_poses:
-                f.write(
-                    f"{img_id} {' '.join(str(v) for v in qvec)} {' '.join(str(v) for v in tvec)} {cam_id} {name}\n")
-                f.write("\n")
+        # Train 3D Gaussian Splatting
+        print(f"[{job_id}] Training 3D Gaussian Splatting (3000 iterations)...")
+        gs_model_path = os.path.join(OUTPUT_DIR, "gaussian_splatting_model")
+        os.makedirs(gs_model_path, exist_ok=True)
 
-        # Generate initial point cloud (random points in a sphere)
-        # 4C4D needs an initial point cloud to start training from
-        num_init_points = 10000
-        np.random.seed(42)
-
-        # Generate random points in a sphere of radius 1.5 (inside camera orbit radius 3.0)
-        theta = np.random.uniform(0, 2 * np.pi, num_init_points)
-        phi = np.arccos(np.random.uniform(-1, 1, num_init_points))
-        r = np.random.uniform(0, 1.5, num_init_points)
-        x_coords = r * np.sin(phi) * np.cos(theta)
-        y_coords = r * np.sin(phi) * np.sin(theta)
-        z_coords = r * np.cos(phi)
-
-        # Write points3D.bin (binary)
-        # Format per point: point3d_id (Q), x, y, z (ddd), r, g, b (BBB), error (d), track_length (Q)
-        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', num_init_points))
-            for pid in range(num_init_points):
-                f.write(struct.pack('<Q', pid + 1))  # point3d_id
-                f.write(struct.pack(
-                    # xyz
-                    '<ddd', x_coords[pid], y_coords[pid], z_coords[pid]))
-                f.write(struct.pack('<BBB', 128, 128, 128))  # rgb (gray)
-                f.write(struct.pack('<d', 0.5))  # error
-                f.write(struct.pack('<Q', 0))  # track_length (no track data)
-
-        # Write points3D.txt (text fallback)
-        with open(os.path.join(dst_sparse, "points3D.txt"), 'w') as f:
-            f.write("# 3D point list with one line of data per point:\n")
-            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
-            for pid in range(num_init_points):
-                f.write(
-                    f"{pid + 1} {x_coords[pid]} {y_coords[pid]} {z_coords[pid]} 128 128 128 0.5\n")
-
-        image_file_count = len(os.listdir(c4d_images))
-        print(f"[{job_id}] Prepared {image_file_count} images for 4C4D ({num_frames} timestamps x {num_frames} cameras)")
-
-        # Run 4C4D training
-        print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
-        c4d_model_path = os.path.join(OUTPUT_DIR, "4c4d_model")
-        c4d_config_path = os.path.join(OUTPUT_DIR, "4c4d_config.yaml")
-        build_4c4d_config(
-            config_path=c4d_config_path,
-            source_path=c4d_source,
-            model_path=c4d_model_path,
-            iterations=1500,
-        )
         run_cmd([
             "python3", "/workspace/4C4D/train.py",
-            "--config", c4d_config_path,
-            "--save_iterations", "1500",
+            "-s", gs_source,
+            "-m", gs_model_path,
+            "--iterations", "3000",
+            "--test_iterations", "-1",
+            "--save_iterations", "3000",
+            "--checkpoint_iterations", "3000",
         ], cwd="/workspace/4C4D")
 
         # Convert PLY to SPLAT
-        print(f"[{job_id}] Converting PLY to binary SPLAT format...")
-        ply_input = find_latest_4c4d_ply(c4d_model_path)
-        convert_ply_to_splat(ply_input, splat_output)
+        print(f"[{job_id}] Converting to .splat format...")
+        ply_path = find_latest_ply(gs_model_path)
+        convert_ply_to_splat(ply_path, splat_output)
 
-        # Upload to S3
-        print(f"[{job_id}] Uploading to AWS S3...")
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-            region_name=os.environ.get("AWS_REGION", "us-east-1")
-        )
-
-        bucket_name = os.environ.get(
-            "AWS_BUCKET_NAME", "your-production-bucket-name")
-        base_s3_folder = f"renders/{user_id}/{job_id}"
-
-        files_to_upload = [
-            ("input_video.mp4", video_path),
-            ("scene_model_4d.splat", splat_output)
-        ]
-
-        uploaded_files = []
-        presigned_splat_url = None
-
-        for file_name, local_path in files_to_upload:
-            if os.path.exists(local_path):
-                s3_key = f"{base_s3_folder}/{file_name}"
-                s3_client.upload_file(local_path, bucket_name, s3_key)
-                uploaded_files.append(file_name)
-
-                if file_name == "scene_model_4d.splat":
-                    presigned_splat_url = s3_client.generate_presigned_url(
-                        'get_object',
-                        Params={'Bucket': bucket_name, 'Key': s3_key},
-                        ExpiresIn=3600
-                    )
-
-        print(f"[{job_id}] Process complete.")
+        print(f"[{job_id}] Success! Generated 3D Gaussian Splat.")
         return {
-            "status": "COMPLETED",
-            "spicygen_job_id": job_id,
-            "s3_folder_path": f"{base_s3_folder}/",
-            "splat_url": presigned_splat_url,
-            "files": uploaded_files
+            "status": "success",
+            "splat_path": splat_output,
+            "num_frames": len(frames),
+            "message": "3D Gaussian Splatting completed successfully. You can view the .splat file in any compatible viewer."
         }
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.output or e.stderr or e.stdout or "Subprocess execution failed"
-        return {"error": f"Pipeline error: {error_msg}"}
-    except NoCredentialsError:
-        return {"error": "AWS credentials not available in RunPod environment secrets."}
     except Exception as e:
-        return {"error": f"Internal Process Failure: {str(e)}"}
+        print(f"[{job_id}] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
 
 if __name__ == "__main__":
     runpod.serverless.start({"handler": handler})
