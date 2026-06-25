@@ -240,13 +240,18 @@ def handler(job):
                 src) else shutil.copytree(src, dst)
 
         # Copy only the frames that COLMAP successfully reconstructed
-        # Read the image names from COLMAP's database
-        db_path = os.path.join(colmap_dir, "database.db")
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM images")
-        colmap_image_names = set(row[0] for row in cursor.fetchall())
-        conn.close()
+        # Read image names directly from COLMAP's images.bin
+        import sys
+        sys.path.insert(0, "/usr/local/lib/python3.10/dist-packages")
+        try:
+            from colmap import read_write_model
+            cam_extrinsics = read_write_model.read_images_binary(
+                os.path.join(dst_sparse, "images.bin"))
+            colmap_image_names = set(
+                img.name for img in cam_extrinsics.values())
+        except Exception as e:
+            print(f"[{job_id}] Warning: Could not read images.bin: {e}")
+            colmap_image_names = set(os.path.basename(f) for f in frames)
 
         print(f"[{job_id}] COLMAP reconstructed {len(colmap_image_names)} images")
 
