@@ -233,56 +233,56 @@ def handler(job):
             shutil.copy2(frame, os.path.join(
                 c4d_images, os.path.basename(frame)))
 
-        # Create cameras.bin, images.bin, points3D.bin with orbiting camera poses
+        # Create COLMAP text format files with orbiting camera poses
         import math
         from scipy.spatial.transform import Rotation as R
 
         num_frames = len(frames)
-        focal_length = 1536.0  # From COLMAP output
-        image_width, image_height = 1280, 720  # From video
+        focal_length = 1536.0
+        image_width, image_height = 1280, 720
 
-        # cameras.bin - single shared camera
-        with open(os.path.join(dst_sparse, "cameras.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', 1))  # 1 camera
-            f.write(struct.pack('<I', 1))  # camera_id
-            f.write(b'SIMPLE_PINHOLE\x00')  # model name
-            f.write(struct.pack('<Q', image_width))
-            f.write(struct.pack('<Q', image_height))
-            f.write(struct.pack('<d', focal_length))
-            f.write(struct.pack('<d', image_width / 2))
-            f.write(struct.pack('<d', image_height / 2))
+        # Generate orbiting camera poses
+        camera_poses = []
+        for i, frame in enumerate(frames):
+            angle = 2 * math.pi * i / num_frames
+            radius = 3.0
+            cx, cy, cz = radius * \
+                math.cos(angle), 0.0, radius * math.sin(angle)
+            forward = np.array([-cx, -cy, -cz])
+            forward /= np.linalg.norm(forward)
+            up = np.array([0, 1, 0])
+            right = np.cross(forward, up)
+            right /= np.linalg.norm(right)
+            up = np.cross(right, forward)
+            rot_mat = np.column_stack([right, up, -forward])
+            q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
+            qvec = (q[3], q[0], q[1], q[2])  # COLMAP: (w, x, y, z)
+            tvec = -rot_mat.T @ np.array([cx, cy, cz])
+            camera_poses.append(
+                (i + 1, 1, os.path.basename(frame), qvec, tuple(tvec)))
 
-        # images.bin - one entry per frame with orbiting poses
-        with open(os.path.join(dst_sparse, "images.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', num_frames))
-            for i, frame in enumerate(frames):
-                angle = 2 * math.pi * i / num_frames
-                # Camera position on orbit
-                radius = 3.0
-                cx, cy, cz = radius * \
-                    math.cos(angle), 0.0, radius * math.sin(angle)
-                # Look-at origin
-                forward = np.array([-cx, -cy, -cz])
-                forward /= np.linalg.norm(forward)
-                up = np.array([0, 1, 0])
-                right = np.cross(forward, up)
-                right /= np.linalg.norm(right)
-                up = np.cross(right, forward)
-                # Rotation matrix to quaternion
-                rot_mat = np.column_stack([right, up, -forward])
-                q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
-                qvec = (q[3], q[0], q[1], q[2])  # COLMAP uses (w, x, y, z)
-                tvec = (-np.dot(rot_mat.T, np.array([cx, cy, cz])))
-                # Write image entry
-                f.write(struct.pack('<II', i + 1, 1))  # image_id, camera_id
-                f.write(os.path.basename(frame).encode('utf-8') + b'\x00')
-                f.write(struct.pack('<4d', *qvec))
-                f.write(struct.pack('<3d', *tvec))
-                f.write(struct.pack('<Q', 0))  # 0 2D points
+        # Write cameras.txt
+        # 4C4D requires PINHOLE model (not SIMPLE_PINHOLE) with 4 params: fx, fy, cx, cy
+        with open(os.path.join(dst_sparse, "cameras.txt"), 'w') as f:
+            f.write("# Camera list with one line of data per camera:\n")
+            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+            f.write(
+                f"1 PINHOLE {image_width} {image_height} {focal_length} {focal_length} {image_width/2} {image_height/2}\n")
 
-        # Empty points3D.bin
-        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', 0))  # 0 points
+        # Write images.txt
+        with open(os.path.join(dst_sparse, "images.txt"), 'w') as f:
+            f.write("# Image list with two lines of data per image:\n")
+            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+            f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+            for img_id, cam_id, name, qvec, tvec in camera_poses:
+                f.write(
+                    f"{img_id} {' '.join(str(v) for v in qvec)} {' '.join(str(v) for v in tvec)} {cam_id} {name}\n")
+                f.write("\n")
+
+        # Write empty points3D.txt
+        with open(os.path.join(dst_sparse, "points3D.txt"), 'w') as f:
+            f.write("# 3D point list with one line of data per point:\n")
+            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
 
         # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
