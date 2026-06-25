@@ -279,7 +279,8 @@ def handler(job):
             qvec = (q[3], q[0], q[1], q[2])  # COLMAP: (w, x, y, z)
             tvec = -rot_mat.T @ np.array([cx, cy, cz])
             # Use the renamed filename: cam00_0000.png, cam00_0001.png, etc.
-            renamed = f"cam00_{i:04d}.png"
+            # COLMAP stores names WITHOUT the .png extension
+            renamed = f"cam00_{i:04d}"
             camera_poses.append(
                 (i + 1, 1, renamed, qvec, tuple(tvec)))
 
