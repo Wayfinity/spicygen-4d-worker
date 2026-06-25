@@ -228,10 +228,12 @@ def handler(job):
         os.makedirs(c4d_images, exist_ok=True)
         os.makedirs(dst_sparse, exist_ok=True)
 
-        # Copy frames to images directory
-        for frame in frames:
-            shutil.copy2(frame, os.path.join(
-                c4d_images, os.path.basename(frame)))
+        # Copy frames to images directory with correct naming
+        # 4C4D expects: cam{cam_id}_{timestamp}.png format
+        for frame_idx, frame in enumerate(frames):
+            # Rename to cam00_0000.png, cam00_0001.png, etc.
+            dst_name = f"cam00_{frame_idx:04d}.png"
+            shutil.copy2(frame, os.path.join(c4d_images, dst_name))
 
         # Create COLMAP text format files with orbiting camera poses
         import math
@@ -258,8 +260,10 @@ def handler(job):
             q = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
             qvec = (q[3], q[0], q[1], q[2])  # COLMAP: (w, x, y, z)
             tvec = -rot_mat.T @ np.array([cx, cy, cz])
+            # Use the renamed filename: cam00_0000.png, cam00_0001.png, etc.
+            renamed = f"cam00_{i:04d}.png"
             camera_poses.append(
-                (i + 1, 1, os.path.basename(frame), qvec, tuple(tvec)))
+                (i + 1, 1, renamed, qvec, tuple(tvec)))
 
         # Write cameras.bin (binary) - 4C4D tries this first
         # Format: num_cameras (Q), then for each: camera_id (i), model_id (i), width (Q), height (Q), params (4 doubles for PINHOLE)
