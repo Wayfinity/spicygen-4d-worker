@@ -4,6 +4,7 @@ import subprocess
 import struct
 import urllib.request
 import glob
+import sqlite3
 import runpod
 import boto3
 import numpy as np
@@ -227,14 +228,35 @@ def handler(job):
         c4d_images = os.path.join(c4d_source, "images")
         os.makedirs(c4d_images, exist_ok=True)
 
-        # Copy COLMAP sparse reconstruction
-        shutil.copytree(sparse_dir, os.path.join(
-            c4d_source, "sparse", "0"), dirs_exist_ok=True)
+        # Copy COLMAP sparse reconstruction (excluding any images/ subdir)
+        dst_sparse = os.path.join(c4d_source, "sparse", "0")
+        os.makedirs(dst_sparse, exist_ok=True)
+        for item in os.listdir(sparse_dir):
+            src = os.path.join(sparse_dir, item)
+            dst = os.path.join(dst_sparse, item)
+            if os.path.isdir(src) and item == "images":
+                continue  # Skip images subdir if present
+            shutil.copy2(src, dst) if os.path.isfile(
+                src) else shutil.copytree(src, dst)
 
-        # Copy frames as images
+        # Copy only the frames that COLMAP successfully reconstructed
+        # Read the image names from COLMAP's database
+        db_path = os.path.join(colmap_dir, "database.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM images")
+        colmap_image_names = set(row[0] for row in cursor.fetchall())
+        conn.close()
+
+        print(f"[{job_id}] COLMAP reconstructed {len(colmap_image_names)} images")
+
         for frame in frames:
-            shutil.copy2(frame, os.path.join(
-                c4d_images, os.path.basename(frame)))
+            frame_name = os.path.basename(frame)
+            if frame_name in colmap_image_names:
+                shutil.copy2(frame, os.path.join(c4d_images, frame_name))
+            else:
+                print(
+                    f"[{job_id}] Skipping {frame_name} (not in COLMAP reconstruction)")
 
         # Run 4C4D training
         print(f"[{job_id}] Running 4C4D optimization (1500 iterations)...")
