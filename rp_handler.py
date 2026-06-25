@@ -325,14 +325,39 @@ def handler(job):
                     f"{img_id} {' '.join(str(v) for v in qvec)} {' '.join(str(v) for v in tvec)} {cam_id} {name}\n")
                 f.write("\n")
 
-        # Write empty points3D.bin (binary)
-        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
-            f.write(struct.pack('<Q', 0))  # 0 points
+        # Generate initial point cloud (random points in a sphere)
+        # 4C4D needs an initial point cloud to start training from
+        num_init_points = 10000
+        np.random.seed(42)
 
-        # Write empty points3D.txt (text fallback)
+        # Generate random points in a sphere of radius 1.5 (inside camera orbit radius 3.0)
+        theta = np.random.uniform(0, 2 * np.pi, num_init_points)
+        phi = np.arccos(np.random.uniform(-1, 1, num_init_points))
+        r = np.random.uniform(0, 1.5, num_init_points)
+        x_coords = r * np.sin(phi) * np.cos(theta)
+        y_coords = r * np.sin(phi) * np.sin(theta)
+        z_coords = r * np.cos(phi)
+
+        # Write points3D.bin (binary)
+        # Format per point: point3d_id (Q), x, y, z (ddd), r, g, b (BBB), error (d), track_length (Q)
+        with open(os.path.join(dst_sparse, "points3D.bin"), 'wb') as f:
+            f.write(struct.pack('<Q', num_init_points))
+            for pid in range(num_init_points):
+                f.write(struct.pack('<Q', pid + 1))  # point3d_id
+                f.write(struct.pack(
+                    # xyz
+                    '<ddd', x_coords[pid], y_coords[pid], z_coords[pid]))
+                f.write(struct.pack('<BBB', 128, 128, 128))  # rgb (gray)
+                f.write(struct.pack('<d', 0.5))  # error
+                f.write(struct.pack('<Q', 0))  # track_length (no track data)
+
+        # Write points3D.txt (text fallback)
         with open(os.path.join(dst_sparse, "points3D.txt"), 'w') as f:
             f.write("# 3D point list with one line of data per point:\n")
             f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n")
+            for pid in range(num_init_points):
+                f.write(
+                    f"{pid + 1} {x_coords[pid]} {y_coords[pid]} {z_coords[pid]} 128 128 128 0.5\n")
 
         image_file_count = len(os.listdir(c4d_images))
         print(f"[{job_id}] Prepared {image_file_count} images for 4C4D ({num_frames} timestamps x {num_frames} cameras)")
